@@ -39,12 +39,16 @@ def main() -> None:
 
     release_server_port(port)
 
-    tunnel_command = choose_tunnel_command(provider, port)
+    tunnel_commands = available_tunnel_commands(provider, port)
     write_tunnel_info(
         tunnel_info_path,
         {
             "status": "starting",
-            "provider": tunnel_command.provider if tunnel_command else provider,
+            "provider": (
+                ", ".join(command.provider for command in tunnel_commands)
+                if tunnel_commands
+                else provider
+            ),
             "public_url": None,
             "started_at": time.time(),
         },
@@ -68,16 +72,29 @@ def main() -> None:
     )
 
     tunnel = None
+    tunnel_command = tunnel_commands[0] if tunnel_commands else None
+    tunnel_attempt = 0
     try:
         wait_for_server(host, port)
-        if tunnel_command is None:
+        if not tunnel_commands:
             raise RuntimeError(
                 "No tunnel provider found. Install cloudflared or ngrok, or keep "
                 "using dashboard polling. With Homebrew: brew install cloudflared"
             )
 
         while True:
+            tunnel_command = tunnel_commands[tunnel_attempt % len(tunnel_commands)]
+            tunnel_attempt += 1
             try:
+                write_tunnel_info(
+                    tunnel_info_path,
+                    {
+                        "status": "starting",
+                        "provider": tunnel_command.provider,
+                        "public_url": None,
+                        "started_at": time.time(),
+                    },
+                )
                 tunnel = subprocess_start(
                     tunnel_command.command,
                     env=os.environ.copy(),
@@ -108,8 +125,14 @@ def main() -> None:
                 )
             except RuntimeError as exc:
                 if server.poll() is not None:
-                    raise
-                print(f"Restarting tunnel after failure: {exc}")
+                    raise RuntimeError("Server exited while starting tunnel") from exc
+                next_command = tunnel_commands[tunnel_attempt % len(tunnel_commands)]
+                action = (
+                    f"Trying {next_command.provider} next"
+                    if next_command.provider != tunnel_command.provider
+                    else f"Restarting {tunnel_command.provider}"
+                )
+                print(f"{action} after tunnel failure: {exc}")
                 write_tunnel_info(
                     tunnel_info_path,
                     {
@@ -117,6 +140,7 @@ def main() -> None:
                         "provider": tunnel_command.provider,
                         "public_url": None,
                         "message": str(exc),
+                        "next_provider": next_command.provider,
                         "restarting_at": time.time(),
                     },
                 )
@@ -145,8 +169,13 @@ class TunnelCommand:
 
 
 def choose_tunnel_command(provider: str, port: int) -> TunnelCommand | None:
+    commands = available_tunnel_commands(provider, port)
+    return commands[0] if commands else None
+
+
+def available_tunnel_commands(provider: str, port: int) -> list[TunnelCommand]:
     if provider == "none":
-        return None
+        return []
     candidates = []
     if provider in {"auto", "cloudflared"}:
         candidates.append(
@@ -174,12 +203,12 @@ def choose_tunnel_command(provider: str, port: int) -> TunnelCommand | None:
                 ["npx", "--yes", "localtunnel", "--port", str(port)],
             )
         )
-    for candidate in candidates:
-        if shutil.which(candidate.command[0]):
-            return candidate
+    available = [
+        candidate for candidate in candidates if shutil.which(candidate.command[0])
+    ]
     if provider not in {"auto", "cloudflared", "ngrok", "localtunnel"}:
         raise RuntimeError(f"Unknown TUNNEL_PROVIDER: {provider}")
-    return None
+    return available
 
 
 def subprocess_start(command: list[str], env: dict[str, str], *, capture_output: bool):
