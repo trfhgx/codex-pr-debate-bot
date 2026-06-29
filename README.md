@@ -5,14 +5,12 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/YOUR_ORG/codex-pr-debate-bot/actions/workflows/ci.yml"><img src="https://github.com/YOUR_ORG/codex-pr-debate-bot/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/trfhgx/codex-pr-debate-bot/actions/workflows/ci.yml"><img src="https://github.com/trfhgx/codex-pr-debate-bot/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT" /></a>
 </p>
 
-A self-hosted GitHub bot that turns PR comments into structured Codex work using your local Codex app-server. It uses your Codex subscription instead of direct API calls, keeps implementation work in inspectable Codex threads, and debates the request before coding so you and Codex reach shared understanding first.
-
-Codex work runs through the **official Codex app-server JSON-RPC protocol** (`thread/start`, `turn/start`) — not direct `/v1/responses` calls. Follow-up PR replies continue on the same debate thread; implementation starts a separate Codex thread you can inspect.
+A self-hosted GitHub bot that turns PR comments into structured Codex work using your local Codex app-server. It uses your Codex subscription instead of direct API calls, keeps debate replies on the same Codex thread, launches implementation in an inspectable Codex thread, and debates the request before coding so you and Codex reach shared understanding first.
 
 ---
 
@@ -22,13 +20,14 @@ Codex work runs through the **official Codex app-server JSON-RPC protocol** (`th
   <img src="assets/github_pr_mockup.jpg" alt="GitHub PR Comment debate and code suggestion mockup" width="100%" style="border-radius: 20px;" />
 </p>
 
-| Stage | What happens |
-| ----- | ------------ |
-| **Trigger** | A PR comment (or PR title/body) contains your marker phrase, default `codex` |
-| **Debate** | Codex reads the full PR context and asks 2-3 focused questions with recommended answers |
-| **Continue** | Human replies are sent back into the same Codex debate thread |
-| **Implement** | When status is `ready_to_implement`, Codex runs a separate implementation thread you can review |
-| **Reply** | The bot posts GitHub comments with questions, progress, and a final summary |
+Meet your cozy, retro-pixelated PR debate companion! ☕️
+
+Instead of writing code immediately (which often leads to bugs or misaligned features), the bot initiates a friendly debate loop directly inside your GitHub Pull Request thread:
+
+1. **The Handshake** — Mention `codex` in a PR comment to wake up the bot.
+2. **The Cozy Debate** — It reads the PR context and posts a checklist with 2–3 focused questions to ensure alignment.
+3. **The Feedback** — You reply with your answers, continuing the conversation in the same Codex debate thread.
+4. **The Implementation** — Once there is shared understanding, the bot starts an implementation thread to write, test, and commit the code directly to your branch.
 
 ---
 
@@ -135,7 +134,7 @@ sequenceDiagram
 ## Quick start
 
 ```bash
-git clone https://github.com/YOUR_ORG/codex-pr-debate-bot.git
+git clone https://github.com/trfhgx/codex-pr-debate-bot.git
 cd codex-pr-debate-bot
 make setup
 make start
