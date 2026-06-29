@@ -684,6 +684,112 @@ class RepoWebhookDebateE2ETests(unittest.TestCase):
                 debug_sessions[0]["state"]["unresolved_decisions"][0],
             )
 
+    def test_comment_only_debate_posts_direct_reply_without_implementation(self) -> None:
+        github_state = MockGitHubState()
+
+        with (
+            MockHTTPServer(lambda _: github_handler_factory(github_state)) as github,
+            isolated_app_env(github.base_url) as main,
+            TestClient(main.app) as client,
+        ):
+            import pr_comment_codex_bot.service as service_module
+            from pr_comment_codex_bot.models import (
+                CodexDebateResult,
+                InterviewDecision,
+            )
+
+            class DirectReplyCodexThreadClient:
+                def __init__(self, settings: Any) -> None:
+                    self.settings = settings
+
+                async def run_debate(
+                    self,
+                    *,
+                    context: Any,
+                    session: Any,
+                    comment_style_guide: str,
+                ) -> CodexDebateResult:
+                    return CodexDebateResult(
+                        job_id="codex-thread-debate-reply",
+                        thread_id="codex-thread-debate-reply",
+                        decision=InterviewDecision.model_validate(
+                            {
+                                "status": "ready_to_reply",
+                                "reply_body": "hi",
+                                "questions": [],
+                                "resolved_decisions": ["User asked for a reply only."],
+                                "unresolved_decisions": [],
+                                "codebase_evidence": [],
+                                "implementation_brief": None,
+                                "direct_reply_body": "hi",
+                            }
+                        ),
+                    )
+
+            add_response = client.post(
+                "/watched-repos", json={"url": "https://github.com/acme/widgets"}
+            )
+            self.assertEqual(add_response.status_code, 200, add_response.text)
+            payload = {
+                "action": "created",
+                "repository": {"full_name": "acme/widgets"},
+                "issue": {"number": 42, "pull_request": {"url": "ignored"}},
+                "comment": {
+                    **latest_comment_payload(),
+                    "id": 995,
+                    "body": "codex reply hi only",
+                },
+            }
+            body, signature = signed_github_body(payload, "test-secret")
+            with patch.object(
+                service_module, "CodexThreadClient", DirectReplyCodexThreadClient
+            ):
+                webhook_response = client.post(
+                    "/webhooks/github",
+                    content=body,
+                    headers={
+                        "content-type": "application/json",
+                        "x-github-event": "issue_comment",
+                        "x-github-delivery": "delivery-direct-reply",
+                        "x-hub-signature-256": signature,
+                    },
+                )
+            self.assertEqual(webhook_response.status_code, 200, webhook_response.text)
+            self.assertEqual(len(github_state.posted_comments), 1)
+            self.assertEqual(
+                github_state.posted_comments[0]["body"],
+                "<!-- pr-comment-codex-bot -->\nhi",
+            )
+
+            sessions = client.get("/debug/sessions").json()
+            self.assertEqual(sessions[0]["state"]["status"], "replied")
+            self.assertIsNone(sessions[0]["state"]["codex_thread_id"])
+
+            events = client.get("/events?limit=1").json()
+            self.assertEqual(events[0]["status"], "replied")
+            self.assertIn("without implementation", events[0]["summary"])
+
+    def test_legacy_comment_only_brief_posts_direct_reply(self) -> None:
+        from pr_comment_codex_bot.models import InterviewDecision
+        from pr_comment_codex_bot.service import PRCommentService
+
+        decision = InterviewDecision.model_validate(
+            {
+                "status": "ready_to_implement",
+                "reply_body": "Implementation is ready.",
+                "questions": [],
+                "resolved_decisions": [],
+                "unresolved_decisions": [],
+                "codebase_evidence": [],
+                "implementation_brief": "Post a PR comment containing exactly: hi",
+            }
+        )
+
+        self.assertEqual(
+            PRCommentService._direct_reply_body_from_decision(decision),
+            "hi",
+        )
+
     def test_disabled_repo_ignores_webhook_comments(self) -> None:
         github_state = MockGitHubState()
 

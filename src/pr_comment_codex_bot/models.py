@@ -10,6 +10,7 @@ SessionStatus = Literal[
     "ready_to_implement",
     "implementing",
     "implemented",
+    "replied",
     "blocked",
 ]
 
@@ -50,13 +51,14 @@ class InterviewQuestion(BaseModel):
 
 
 class InterviewDecision(BaseModel):
-    status: Literal["needs_answer", "ready_to_implement", "blocked"]
+    status: Literal["needs_answer", "ready_to_implement", "ready_to_reply", "blocked"]
     reply_body: str
     questions: list[InterviewQuestion] = Field(default_factory=list)
     resolved_decisions: list[str] = Field(default_factory=list)
     unresolved_decisions: list[str] = Field(default_factory=list)
     codebase_evidence: list[str] = Field(default_factory=list)
     implementation_brief: str | None = None
+    direct_reply_body: str | None = None
 
 
 class SessionState(BaseModel):
@@ -83,6 +85,8 @@ class SessionState(BaseModel):
         self.implementation_brief = decision.implementation_brief
         if decision.status == "ready_to_implement":
             self.status = "ready_to_implement"
+        elif decision.status == "ready_to_reply":
+            self.status = "replied"
         elif decision.status == "blocked":
             self.status = "blocked"
         else:

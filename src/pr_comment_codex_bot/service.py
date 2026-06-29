@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
 from pathlib import Path
 from typing import Any
@@ -497,6 +498,30 @@ class PRCommentService:
         session.apply_decision(decision)
         await self.storage.save_session(session)
 
+        direct_reply_body = self._direct_reply_body_from_decision(decision)
+        if direct_reply_body is not None:
+            session.status = "replied"
+            session.implementation_brief = None
+            await self.storage.save_session(session)
+            await github.create_issue_comment(
+                owner=owner,
+                repo=repo,
+                issue_number=pr_number,
+                body=mark_bot_comment(direct_reply_body),
+            )
+            await self._update_event(
+                event_id,
+                status="replied",
+                summary="Posted direct reply to PR without implementation",
+                details_patch={
+                    "resolved_decisions": decision.resolved_decisions,
+                    "unresolved_decisions": decision.unresolved_decisions,
+                    "debate_job_id": session.debate_job_id,
+                    "debate_thread_id": session.debate_thread_id,
+                },
+            )
+            return
+
         if decision.status in {"needs_answer", "blocked"}:
             await github.create_issue_comment(
                 owner=owner,
@@ -546,6 +571,24 @@ class PRCommentService:
             comment_style=comment_style,
             event_id=event_id,
         )
+
+    @staticmethod
+    def _direct_reply_body_from_decision(decision: Any) -> str | None:
+        if decision.status == "ready_to_reply":
+            return str(decision.direct_reply_body or decision.reply_body).strip() or None
+
+        if decision.status != "ready_to_implement" or not decision.implementation_brief:
+            return None
+
+        match = re.match(
+            r"^\s*(?:post|create|add)\s+(?:a\s+)?(?:pr\s+|github\s+)?"
+            r"comment\s+(?:containing|with)\s+exactly\s*:?\s*(?P<body>.+?)\s*$",
+            decision.implementation_brief,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if match:
+            return match.group("body").strip().strip('"')
+        return None
 
     async def _start_implementation(
         self,

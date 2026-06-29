@@ -331,11 +331,14 @@ next implementation.
   "resolved_decisions": [],
   "unresolved_decisions": [],
   "codebase_evidence": [],
-  "implementation_brief": null
+  "implementation_brief": null,
+  "direct_reply_body": null
 }
 ```
 
-Status values: `needs_answer`, `ready_to_implement`, `blocked`.
+Status values: `needs_answer`, `ready_to_implement`, `ready_to_reply`, `blocked`.
+Use `ready_to_reply` when the requested action is only to post a GitHub PR
+comment. Only `ready_to_implement` starts an implementation thread.
 
 ### Implementation payload
 

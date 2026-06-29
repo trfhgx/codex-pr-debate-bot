@@ -34,7 +34,7 @@ shared understanding.
 
 Return a JSON object with this shape:
 {
-  "status": "needs_answer" | "ready_to_implement" | "blocked",
+  "status": "needs_answer" | "ready_to_implement" | "ready_to_reply" | "blocked",
   "reply_body": "GitHub comment to post",
   "questions": [
     {
@@ -46,8 +46,13 @@ Return a JSON object with this shape:
   "resolved_decisions": ["..."],
   "unresolved_decisions": ["..."],
   "codebase_evidence": ["..."],
-  "implementation_brief": "Only when ready_to_implement"
+  "implementation_brief": "Only when ready_to_implement and code/workspace changes are needed",
+  "direct_reply_body": "Only when ready_to_reply"
 }
+
+Use ready_to_reply when the user is asking the bot to post a PR comment or answer
+in GitHub without making code/workspace changes. Do not start implementation for
+requests like "reply hi", "comment LGTM", or "answer this PR with ...".
 """
 
 
