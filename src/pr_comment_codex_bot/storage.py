@@ -173,6 +173,14 @@ class Storage:
             await db.commit()
             return cursor.rowcount > 0
 
+    async def set_watched_repo_enabled(self, watch_id: int, *, enabled: bool) -> None:
+        async with aiosqlite.connect(self.database_path) as db:
+            await db.execute(
+                "update watched_repos set enabled = ? where id = ?",
+                (1 if enabled else 0, watch_id),
+            )
+            await db.commit()
+
     async def update_watched_repo_webhook(
         self,
         watch_id: int,

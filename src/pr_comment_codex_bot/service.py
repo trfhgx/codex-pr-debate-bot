@@ -37,6 +37,13 @@ class PRCommentService:
                 summary=f"Watched repo {watch_id} does not exist",
             )
             return
+        if not watch.get("enabled"):
+            await self._update_event(
+                event_id,
+                status="ignored",
+                summary=f"Skipped webhook setup because {watch['repo_full_name']} is disabled",
+            )
+            return
 
         webhook_url = self._current_github_webhook_url()
         if not webhook_url:
@@ -48,7 +55,17 @@ class PRCommentService:
             return
 
         secret, generated = self._get_or_create_webhook_secret()
-        github = GitHubClient(self.settings, installation_id=None)
+        github = self._holder_github_client()
+        if github is None:
+            summary = (
+                "Cannot set up GitHub webhook because holder account auth is "
+                "not configured"
+            )
+            await self.storage.update_watched_repo_webhook(
+                watch_id, status="failed", summary=summary
+            )
+            await self._update_event(event_id, status="blocked", summary=summary)
+            return
         owner = str(watch["owner"])
         repo = str(watch["repo"])
         repo_full_name = str(watch["repo_full_name"])
@@ -114,11 +131,11 @@ class PRCommentService:
         repo_full_name: str,
         event_id: int | None,
     ) -> dict[str, Any] | None:
-        bot_login = self.settings.github_bot_login
-        admin_github = self._repo_admin_github_client()
+        bot_login = self.settings.github_replier_login
+        admin_github = self._holder_github_client()
         if not bot_login or admin_github is None:
             return None
-        permission = self.settings.github_repo_admin_collaborator_permission
+        permission = self.settings.github_holder_collaborator_permission
         result: dict[str, Any] = {
             "bot_login": bot_login,
             "permission": permission,
@@ -148,11 +165,14 @@ class PRCommentService:
             )
             return result
 
+        replier_github = self._replier_github_client()
+        if replier_github is None:
+            result["acceptance"] = {"status": "skipped", "message": "No replier auth"}
+            return result
         try:
-            accept = await GitHubClient(
-                self.settings,
-                installation_id=None,
-            ).accept_repository_invitation_for_repo(owner=owner, repo=repo)
+            accept = await replier_github.accept_repository_invitation_for_repo(
+                owner=owner, repo=repo
+            )
             result["acceptance"] = accept
         except httpx.HTTPStatusError as exc:
             result["acceptance"] = {
@@ -175,6 +195,13 @@ class PRCommentService:
                 event_id,
                 status="ignored",
                 summary=f"Ignored PR event for unwatched repo {repo_full_name}",
+            )
+            return
+        if not watch.get("enabled"):
+            await self._update_event(
+                event_id,
+                status="ignored",
+                summary=f"Ignored PR event because {repo_full_name} watch is disabled",
             )
             return
         pr = payload.get("pull_request") or {}
@@ -215,7 +242,14 @@ class PRCommentService:
             )
             return
 
-        github = GitHubClient(self.settings, installation_id=None)
+        github = self._replier_github_client()
+        if github is None:
+            await self._update_event(
+                event_id,
+                status="failed",
+                summary="Cannot poll PR because replier account auth is not configured",
+            )
+            return
         owner = str(watch["owner"])
         repo = str(watch["repo"])
         pr_number = int(watch["pr_number"])
@@ -343,6 +377,13 @@ class PRCommentService:
                 summary=f"Ignored PR comment for unwatched repo {repo_full_name}",
             )
             return
+        if not watch.get("enabled"):
+            await self._update_event(
+                event_id,
+                status="ignored",
+                summary=f"Ignored PR comment because {repo_full_name} watch is disabled",
+            )
+            return
 
         if await self.storage.has_processed_comment(comment_id):
             await self._update_event(
@@ -406,9 +447,16 @@ class PRCommentService:
             session = SessionState(repo_full_name=repo_full_name, pr_number=pr_number)
         session.last_processed_comment_id = comment_id
 
-        github = GitHubClient(
-            self.settings, (payload.get("installation") or {}).get("id")
+        github = self._replier_github_client(
+            installation_id=(payload.get("installation") or {}).get("id")
         )
+        if github is None:
+            await self._update_event(
+                event_id,
+                status="failed",
+                summary="Cannot handle comment because replier account auth is not configured",
+            )
+            return
         context = await github.fetch_pr_context(
             owner=owner,
             repo=repo,
@@ -518,8 +566,8 @@ class PRCommentService:
 
     def _is_own_comment(self, comment: dict[str, Any]) -> bool:
         login = ((comment.get("user") or {}).get("login") or "").lower()
-        return bool(self.settings.github_bot_login) and (
-            login == self.settings.github_bot_login.lower()
+        return bool(self.settings.github_replier_login) and (
+            login == self.settings.github_replier_login.lower()
         )
 
     async def _update_event(
@@ -548,6 +596,89 @@ class PRCommentService:
             return None
         return f"{public_url}/webhooks/github"
 
+    def enrich_watched_repo(self, watch: dict[str, object]) -> dict[str, object]:
+        current_url = self._current_github_webhook_url()
+        stored_url = str(watch.get("webhook_url") or "").rstrip("/")
+        enabled = bool(watch.get("enabled"))
+        hook_status = str(watch.get("last_webhook_status") or "")
+
+        if not enabled:
+            status = "disabled"
+            connected = False
+            label = "Off"
+        elif not current_url:
+            status = "no_tunnel"
+            connected = False
+            label = "Not connected — no tunnel"
+        elif not stored_url:
+            status = "not_connected"
+            connected = False
+            label = "Not connected"
+        elif stored_url != current_url.rstrip("/"):
+            status = "stale"
+            connected = False
+            label = "Not connected — stale webhook"
+        elif hook_status in {"created", "updated"}:
+            status = "connected"
+            connected = True
+            label = "Connected"
+        elif hook_status in {"failed", "missing_tunnel"}:
+            status = "not_connected"
+            connected = False
+            label = f"Not connected — {hook_status.replace('_', ' ')}"
+        else:
+            status = "connecting"
+            connected = False
+            label = "Connecting..."
+
+        return {
+            **watch,
+            "connected": connected,
+            "connection_status": status,
+            "connection_label": label,
+            "current_webhook_url": current_url,
+        }
+
+    def _watch_needs_webhook_sync(
+        self, watch: dict[str, object], *, webhook_url: str
+    ) -> bool:
+        stored_url = str(watch.get("webhook_url") or "").rstrip("/")
+        status = str(watch.get("last_webhook_status") or "")
+        if stored_url != webhook_url.rstrip("/"):
+            return True
+        return status in {"", "missing_tunnel", "failed", "pending", "queued"}
+
+    async def sync_enabled_repo_webhooks(
+        self, *, reason: str = "auto"
+    ) -> list[int]:
+        webhook_url = self._current_github_webhook_url()
+        if not webhook_url:
+            return []
+
+        queued_ids: list[int] = []
+        for watch in await self.storage.list_watched_repos():
+            if not watch.get("enabled"):
+                continue
+            if not self._watch_needs_webhook_sync(watch, webhook_url=webhook_url):
+                continue
+            watch_id = int(watch["id"])
+            event_id = await self.storage.record_event(
+                source="sync",
+                event_type="repo_webhook_auto_sync",
+                delivery_id=None,
+                status="queued",
+                summary=(
+                    f"Auto-sync webhook for {watch['repo_full_name']} "
+                    f"({reason})"
+                ),
+                details={"watched_repo": watch, "webhook_url": webhook_url},
+            )
+            await self.setup_webhook_for_repo_watch(
+                watch_id=watch_id, event_id=event_id
+            )
+            queued_ids.append(watch_id)
+        return queued_ids
+
     def _get_or_create_webhook_secret(self) -> tuple[str, bool]:
         if self.settings.github_webhook_secret:
             return self.settings.github_webhook_secret.get_secret_value(), False
@@ -568,23 +699,44 @@ class PRCommentService:
         env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return secret, True
 
-    def _repo_admin_github_client(self) -> GitHubClient | None:
-        if self.settings.github_repo_admin_token:
+    def _holder_github_client(self) -> GitHubClient | None:
+        if self.settings.github_holder_token:
             return GitHubClient(
                 self.settings,
                 installation_id=None,
-                token_override=(
-                    self.settings.github_repo_admin_token.get_secret_value()
-                ),
+                token_override=self.settings.github_holder_token.get_secret_value(),
                 use_settings_token=False,
             )
-        if self.settings.github_repo_admin_use_gh_cli_token:
+        if self.settings.github_holder_use_gh_cli_token:
             return GitHubClient(
                 self.settings,
                 installation_id=None,
                 use_gh_cli_token=True,
                 use_settings_token=False,
             )
+        return None
+
+    def _replier_github_client(
+        self, *, installation_id: int | None = None
+    ) -> GitHubClient | None:
+        if self.settings.github_replier_token:
+            return GitHubClient(
+                self.settings,
+                installation_id=installation_id,
+                token_override=self.settings.github_replier_token.get_secret_value(),
+                use_settings_token=False,
+            )
+        if self.settings.github_replier_use_gh_cli_token:
+            return GitHubClient(
+                self.settings,
+                installation_id=installation_id,
+                use_gh_cli_token=True,
+                use_settings_token=False,
+            )
+        if installation_id or (
+            self.settings.github_app_id and self.settings.read_github_private_key()
+        ):
+            return GitHubClient(self.settings, installation_id=installation_id)
         return None
 
     @staticmethod
@@ -594,7 +746,7 @@ class PRCommentService:
         if status in {401, 403, 404}:
             return (
                 f"GitHub refused webhook setup ({status}). "
-                "Confirm the bot account has admin access to the repo and hook "
+                "Confirm the holder account has admin access to the repo and hook "
                 "permissions."
             )
         return f"GitHub webhook setup failed ({status}): {message}"
