@@ -104,7 +104,7 @@ class GitHubClient:
     async def ensure_repo_webhook(
         self, *, owner: str, repo: str, webhook_url: str, secret: str
     ) -> dict[str, Any]:
-        hooks = await self._paginate(f"/repos/{owner}/{repo}/hooks")
+        hooks = await self.fetch_repo_webhooks(owner=owner, repo=repo)
         payload = {
             "name": "web",
             "active": True,
@@ -152,6 +152,21 @@ class GitHubClient:
             "webhook_url": webhook_url,
             "events": created.get("events", []),
         }
+
+    async def fetch_repo_webhooks(
+        self, *, owner: str, repo: str
+    ) -> list[dict[str, Any]]:
+        return await self._paginate(f"/repos/{owner}/{repo}/hooks")
+
+    async def fetch_repo_webhook_deliveries(
+        self, *, owner: str, repo: str, hook_id: int, limit: int = 5
+    ) -> list[dict[str, Any]]:
+        per_page = max(1, min(limit, 100))
+        return await self._request_json(
+            "GET",
+            f"/repos/{owner}/{repo}/hooks/{hook_id}/deliveries",
+            params={"per_page": per_page},
+        )
 
     async def add_repo_collaborator(
         self, *, owner: str, repo: str, username: str, permission: str

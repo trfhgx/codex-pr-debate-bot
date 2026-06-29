@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import hashlib
 import hmac
@@ -64,7 +65,21 @@ def write_text(handler: BaseHTTPRequestHandler, text: str) -> None:
 
 class MockGitHubState:
     def __init__(self) -> None:
+        self.hooks: list[dict[str, Any]] = []
+        self.hook_deliveries: list[dict[str, Any]] = [
+            {
+                "id": 222,
+                "event": "ping",
+                "action": None,
+                "status": "OK",
+                "status_code": 200,
+                "delivered_at": "2026-06-26T18:00:00Z",
+                "duration": 0.2,
+                "redelivery": False,
+            }
+        ]
         self.created_hooks: list[dict[str, Any]] = []
+        self.updated_hooks: list[dict[str, Any]] = []
         self.collaborator_requests: list[dict[str, Any]] = []
         self.accepted_invitations: list[int] = []
         self.posted_comments: list[dict[str, Any]] = []
@@ -84,7 +99,9 @@ def github_handler_factory(state: MockGitHubState):
             path = urlparse(self.path).path
             accept = self.headers.get("accept", "")
             if path == "/repos/acme/widgets/hooks":
-                write_json(self, [])
+                write_json(self, state.hooks)
+            elif path == "/repos/acme/widgets/hooks/1234/deliveries":
+                write_json(self, state.hook_deliveries)
             elif path == "/user/repository_invitations":
                 write_json(
                     self,
@@ -173,6 +190,22 @@ def github_handler_factory(state: MockGitHubState):
             body = read_json_body(self)
             if path == "/repos/acme/widgets/hooks":
                 state.created_hooks.append(body)
+                state.hooks.append(
+                    {
+                        "id": 1234,
+                        "name": "web",
+                        "active": True,
+                        "events": body["events"],
+                        "config": body["config"],
+                        "last_response": {
+                            "code": 200,
+                            "status": "active",
+                            "message": "OK",
+                        },
+                        "created_at": "2026-06-26T18:00:00Z",
+                        "updated_at": "2026-06-26T18:00:00Z",
+                    }
+                )
                 write_json(
                     self,
                     {
@@ -209,6 +242,16 @@ def github_handler_factory(state: MockGitHubState):
                 state.accepted_invitations.append(555)
                 self.send_response(204)
                 self.end_headers()
+            elif path == "/repos/acme/widgets/hooks/1234":
+                body = read_json_body(self)
+                state.updated_hooks.append(body)
+                state.hooks[0] = {
+                    **state.hooks[0],
+                    "events": body["events"],
+                    "config": body["config"],
+                    "updated_at": "2026-06-26T18:05:00Z",
+                }
+                write_json(self, state.hooks[0])
             else:
                 self.send_error(404, f"Unhandled GitHub PATCH {path}")
 
@@ -381,6 +424,45 @@ class RepoWebhookDebateE2ETests(unittest.TestCase):
             self.assertIn("max-width: 100%", dashboard_html)
             self.assertIn("allEvents.slice(0, 12)", dashboard_html)
             self.assertIn('data-sync="${esc(watch.id)}"', dashboard_html)
+            self.assertIn('data-diagnose="${esc(watch.id)}"', dashboard_html)
+            self.assertIn('id="sync-all-btn"', dashboard_html)
+
+            async def healthy_tunnel(_: str | None) -> dict[str, Any]:
+                return {
+                    "status": "ok",
+                    "health_url": "https://bot.example.test/healthz",
+                    "status_code": 200,
+                }
+
+            main.service._diagnose_tunnel_health = healthy_tunnel
+            diagnostics_response = client.get(
+                f"/watched-repos/{add_response.json()['id']}/diagnostics"
+            )
+            self.assertEqual(
+                diagnostics_response.status_code, 200, diagnostics_response.text
+            )
+            diagnostics = diagnostics_response.json()
+            self.assertEqual(diagnostics["status"], "ok")
+            self.assertEqual(diagnostics["problems"], [])
+            self.assertEqual(diagnostics["github"]["matching_hook"]["id"], 1234)
+            self.assertEqual(diagnostics["github"]["deliveries"][0]["status_code"], 200)
+
+            watch_id = int(add_response.json()["id"])
+            asyncio.run(
+                main.storage.update_watched_repo_webhook(
+                    watch_id,
+                    status="updated",
+                    summary="Stale webhook for test",
+                    webhook_url="https://old.example.test/webhooks/github",
+                )
+            )
+            sync_all_response = client.post("/watched-repos/sync")
+            self.assertEqual(sync_all_response.status_code, 200, sync_all_response.text)
+            self.assertEqual(sync_all_response.json()["watch_ids"], [watch_id])
+            self.assertEqual(
+                github_state.updated_hooks[-1]["config"]["url"],
+                "https://bot.example.test/webhooks/github",
+            )
 
             payload = {
                 "action": "created",

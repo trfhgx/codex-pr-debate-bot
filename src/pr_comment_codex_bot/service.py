@@ -639,6 +639,231 @@ class PRCommentService:
             "current_webhook_url": current_url,
         }
 
+    async def diagnose_webhooks(self) -> dict[str, Any]:
+        current_url = self._current_github_webhook_url()
+        tunnel_health = await self._diagnose_tunnel_health(current_url)
+        holder_github = self._holder_github_client()
+        watches = await self.storage.list_watched_repos()
+        repo_diagnostics = []
+        for watch in watches:
+            repo_diagnostics.append(
+                await self._diagnose_webhook_watch(
+                    watch,
+                    current_url=current_url,
+                    tunnel_health=tunnel_health,
+                    holder_github=holder_github,
+                )
+            )
+        return {
+            "current_webhook_url": current_url,
+            "auto_sync_webhooks": self.settings.github_auto_sync_webhooks,
+            "tunnel": tunnel_health,
+            "repos": repo_diagnostics,
+        }
+
+    async def diagnose_webhook_watch(self, watch_id: int) -> dict[str, Any]:
+        watch = await self.storage.get_watched_repo(watch_id)
+        if not watch:
+            return {
+                "watch_id": watch_id,
+                "status": "missing",
+                "problems": [f"Watched repo {watch_id} does not exist"],
+            }
+        current_url = self._current_github_webhook_url()
+        tunnel_health = await self._diagnose_tunnel_health(current_url)
+        return await self._diagnose_webhook_watch(
+            watch,
+            current_url=current_url,
+            tunnel_health=tunnel_health,
+            holder_github=self._holder_github_client(),
+        )
+
+    async def _diagnose_webhook_watch(
+        self,
+        watch: dict[str, object],
+        *,
+        current_url: str | None,
+        tunnel_health: dict[str, Any],
+        holder_github: GitHubClient | None,
+    ) -> dict[str, Any]:
+        expected_events = {"issue_comment", "pull_request"}
+        problems: list[str] = []
+        owner = str(watch.get("owner") or "")
+        repo = str(watch.get("repo") or "")
+        stored_url = str(watch.get("webhook_url") or "").rstrip("/")
+        enabled = bool(watch.get("enabled"))
+
+        if not enabled:
+            problems.append("Repo watch is disabled")
+        if not current_url:
+            problems.append("No current tunnel webhook URL is available")
+        elif stored_url and stored_url != current_url.rstrip("/"):
+            problems.append("Stored webhook URL does not match the current tunnel URL")
+        if tunnel_health["status"] == "failed":
+            problems.append("Current tunnel health check failed")
+        if holder_github is None:
+            problems.append("Holder GitHub auth is not configured")
+
+        github_details: dict[str, Any] = {
+            "status": "skipped" if holder_github is None else "pending",
+            "matching_hook": None,
+            "bot_hook_count": None,
+            "deliveries": [],
+        }
+        if holder_github is not None and owner and repo:
+            try:
+                hooks = await holder_github.fetch_repo_webhooks(owner=owner, repo=repo)
+                bot_hooks = [
+                    self._diagnostic_hook(hook)
+                    for hook in hooks
+                    if GitHubClient._looks_like_bot_hook(hook)
+                ]
+                matching_hook = next(
+                    (
+                        hook
+                        for hook in bot_hooks
+                        if hook["config"]["url"] == (current_url or "")
+                    ),
+                    None,
+                )
+                github_details = {
+                    "status": "ok",
+                    "matching_hook": matching_hook,
+                    "bot_hook_count": len(bot_hooks),
+                    "bot_hooks": bot_hooks,
+                    "deliveries": [],
+                }
+                if len(bot_hooks) > 1:
+                    problems.append("Multiple bot-looking repo webhooks exist")
+                if current_url and matching_hook is None:
+                    problems.append("No GitHub webhook matches the current tunnel URL")
+                hook_for_delivery = matching_hook or (bot_hooks[0] if bot_hooks else None)
+                if matching_hook:
+                    events = set(matching_hook.get("events") or [])
+                    missing_events = expected_events - events
+                    if missing_events:
+                        problems.append(
+                            "GitHub webhook is missing events: "
+                            + ", ".join(sorted(missing_events))
+                        )
+                    if not matching_hook.get("active"):
+                        problems.append("GitHub webhook is inactive")
+                    content_type = matching_hook["config"].get("content_type")
+                    if content_type != "json":
+                        problems.append("GitHub webhook content type is not JSON")
+                    last_response = matching_hook.get("last_response") or {}
+                    code = last_response.get("code")
+                    if code not in (None, 200):
+                        problems.append(
+                            f"GitHub last response was {code}: "
+                            f"{last_response.get('message') or 'unknown'}"
+                        )
+                if hook_for_delivery and hook_for_delivery.get("id") is not None:
+                    deliveries = await holder_github.fetch_repo_webhook_deliveries(
+                        owner=owner,
+                        repo=repo,
+                        hook_id=int(hook_for_delivery["id"]),
+                        limit=5,
+                    )
+                    github_details["deliveries"] = [
+                        self._diagnostic_delivery(delivery)
+                        for delivery in deliveries[:5]
+                    ]
+                    latest_delivery = github_details["deliveries"][0:1]
+                    if latest_delivery:
+                        status_code = latest_delivery[0].get("status_code")
+                        if status_code != 200:
+                            problems.append(
+                                "Latest GitHub delivery failed with "
+                                f"{status_code}: {latest_delivery[0].get('status')}"
+                            )
+            except httpx.HTTPStatusError as exc:
+                github_details = {
+                    "status": "failed",
+                    "status_code": exc.response.status_code,
+                    "message": self._github_api_message(exc),
+                    "matching_hook": None,
+                    "bot_hook_count": None,
+                    "deliveries": [],
+                }
+                problems.append(
+                    "Could not inspect GitHub webhook: "
+                    f"{github_details['status_code']} {github_details['message']}"
+                )
+            except Exception as exc:
+                github_details = {
+                    "status": "failed",
+                    "message": f"{type(exc).__name__}: {exc}",
+                    "matching_hook": None,
+                    "bot_hook_count": None,
+                    "deliveries": [],
+                }
+                problems.append("Could not inspect GitHub webhook")
+
+        return {
+            "watch": self.enrich_watched_repo(watch),
+            "status": "ok" if not problems else "problem",
+            "problems": problems,
+            "expected_webhook_url": current_url,
+            "stored_webhook_url": stored_url or None,
+            "expected_events": sorted(expected_events),
+            "tunnel": tunnel_health,
+            "github": github_details,
+        }
+
+    async def _diagnose_tunnel_health(
+        self, current_url: str | None
+    ) -> dict[str, Any]:
+        if not current_url:
+            return {"status": "missing", "health_url": None}
+        base_url = current_url.removesuffix("/webhooks/github").rstrip("/")
+        health_url = f"{base_url}/healthz"
+        try:
+            async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+                response = await client.get(health_url)
+            return {
+                "status": "ok" if response.status_code == 200 else "failed",
+                "health_url": health_url,
+                "status_code": response.status_code,
+            }
+        except Exception as exc:
+            return {
+                "status": "failed",
+                "health_url": health_url,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+
+    @staticmethod
+    def _diagnostic_hook(hook: dict[str, Any]) -> dict[str, Any]:
+        config = hook.get("config") or {}
+        return {
+            "id": hook.get("id"),
+            "name": hook.get("name"),
+            "active": hook.get("active"),
+            "events": hook.get("events") or [],
+            "config": {
+                "url": config.get("url"),
+                "content_type": config.get("content_type"),
+                "insecure_ssl": config.get("insecure_ssl"),
+            },
+            "last_response": hook.get("last_response"),
+            "updated_at": hook.get("updated_at"),
+            "created_at": hook.get("created_at"),
+        }
+
+    @staticmethod
+    def _diagnostic_delivery(delivery: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": delivery.get("id"),
+            "event": delivery.get("event"),
+            "action": delivery.get("action"),
+            "status": delivery.get("status"),
+            "status_code": delivery.get("status_code"),
+            "delivered_at": delivery.get("delivered_at"),
+            "duration": delivery.get("duration"),
+            "redelivery": delivery.get("redelivery"),
+        }
+
     def _watch_needs_webhook_sync(
         self, watch: dict[str, object], *, webhook_url: str
     ) -> bool:
@@ -662,14 +887,23 @@ class PRCommentService:
             if not self._watch_needs_webhook_sync(watch, webhook_url=webhook_url):
                 continue
             watch_id = int(watch["id"])
+            is_auto_reason = reason in {
+                "always_on_enabled",
+                "retry",
+                "tunnel_url_changed",
+            }
             event_id = await self.storage.record_event(
                 source="sync",
-                event_type="repo_webhook_auto_sync",
+                event_type=(
+                    "repo_webhook_auto_sync"
+                    if is_auto_reason
+                    else "repo_webhook_sync"
+                ),
                 delivery_id=None,
                 status="queued",
                 summary=(
-                    f"Auto-sync webhook for {watch['repo_full_name']} "
-                    f"({reason})"
+                    f"{'Auto-sync' if is_auto_reason else 'Sync'} webhook for "
+                    f"{watch['repo_full_name']} ({reason})"
                 ),
                 details={"watched_repo": watch, "webhook_url": webhook_url},
             )

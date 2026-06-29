@@ -777,12 +777,15 @@ DASHBOARD_HTML = """
         <div class="repos-toolbar">
           <div class="repos-toolbar-label">
             <span class="repos-toolbar-title">Always on</span>
-            <span class="repos-toolbar-sub" id="always-on-sub">Auto-sync webhooks when tunnel changes</span>
+            <span class="repos-toolbar-sub" id="always-on-sub">Startup sync is mandatory; this only watches tunnel changes</span>
           </div>
-          <label class="repo-toggle" title="Automatically sync webhooks for enabled repos">
-            <input type="checkbox" id="always-on-toggle" checked>
-            <span class="repo-toggle-slider"></span>
-          </label>
+          <div class="repo-actions">
+            <button class="repo-sync" id="sync-all-btn" title="Force webhook setup for all enabled repos">Sync all</button>
+            <label class="repo-toggle" title="Automatically sync webhooks again when the tunnel changes">
+              <input type="checkbox" id="always-on-toggle" checked>
+              <span class="repo-toggle-slider"></span>
+            </label>
+          </div>
         </div>
         <div class="repos-list" id="repos-list">
           <div class="repo-item" style="justify-content: center; color: var(--text-muted);">No repos watched</div>
@@ -884,6 +887,7 @@ DASHBOARD_HTML = """
     const repoToggleBtn = document.querySelector("#repo-toggle-btn");
     const alwaysOnToggle = document.querySelector("#always-on-toggle");
     const alwaysOnSub = document.querySelector("#always-on-sub");
+    const syncAllBtn = document.querySelector("#sync-all-btn");
     let currentTunnelWebhookUrl = null;
     const repoForm = document.querySelector("#repo-form");
     const repoInput = document.querySelector("#repo-input");
@@ -1021,6 +1025,7 @@ DASHBOARD_HTML = """
               </div>
               <div class="repo-actions">
                 <button class="repo-sync" data-sync="${esc(watch.id)}" title="Force webhook setup for this repo">Sync</button>
+                <button class="repo-sync" data-diagnose="${esc(watch.id)}" title="Debug webhook delivery for this repo">Debug</button>
                 <label class="repo-toggle" title="${enabled ? "Turn off this repo" : "Turn on this repo"}">
                   <input type="checkbox" data-toggle="${esc(watch.id)}" ${enabled ? "checked" : ""}>
                   <span class="repo-toggle-slider"></span>
@@ -1090,6 +1095,34 @@ DASHBOARD_HTML = """
             }
           });
         });
+
+        document.querySelectorAll("button[data-diagnose]").forEach(button => {
+          button.addEventListener("click", async (e) => {
+            e.stopPropagation();
+            const watchId = button.getAttribute("data-diagnose");
+            button.disabled = true;
+            const originalText = button.textContent;
+            button.textContent = "Checking";
+            try {
+              const response = await fetch(`/watched-repos/${watchId}/diagnostics`, {
+                cache: "no-store"
+              });
+              if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail || "Failed to run diagnostics");
+              }
+              const diagnostic = await response.json();
+              detailTitle.textContent = `Webhook diagnostics ${watchId}`;
+              detailJson.textContent = JSON.stringify(diagnostic, null, 2);
+              detailModal.showModal();
+            } catch (err) {
+              alert(err.message || "Failed to run diagnostics");
+            } finally {
+              button.disabled = false;
+              button.textContent = originalText;
+            }
+          });
+        });
       } catch (err) {
         console.error("Error loading watches: ", err);
       }
@@ -1101,8 +1134,8 @@ DASHBOARD_HTML = """
         const info = await response.json();
         alwaysOnToggle.checked = !!info.auto_sync_webhooks;
         alwaysOnSub.textContent = info.auto_sync_webhooks
-          ? "Auto-sync enabled — webhooks update when tunnel changes"
-          : "Auto-sync off — use per-repo switch and manual sync";
+          ? "Mandatory startup sync plus tunnel-change watching"
+          : "Mandatory startup sync only; use Sync all after tunnel changes";
       } catch (err) {
         console.error("Error loading sync settings: ", err);
       }
@@ -1128,6 +1161,25 @@ DASHBOARD_HTML = """
         alert(err.message || "Failed to update auto-sync");
       } finally {
         alwaysOnToggle.disabled = false;
+      }
+    });
+
+    syncAllBtn.addEventListener("click", async () => {
+      syncAllBtn.disabled = true;
+      const originalText = syncAllBtn.textContent;
+      syncAllBtn.textContent = "Syncing";
+      try {
+        const response = await fetch("/watched-repos/sync", { method: "POST" });
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.detail || "Failed to sync watched repos");
+        }
+        await refreshAll();
+      } catch (err) {
+        alert(err.message || "Failed to sync watched repos");
+      } finally {
+        syncAllBtn.disabled = false;
+        syncAllBtn.textContent = originalText;
       }
     });
 
@@ -1540,6 +1592,7 @@ async def startup() -> None:
     if settings.github_poll_interval_seconds > 0:
         poll_task = asyncio.create_task(_poll_watched_prs_loop())
     set_webhook_sync_task_enabled(settings.github_auto_sync_webhooks)
+    asyncio.create_task(service.sync_enabled_repo_webhooks(reason="startup"))
 
 
 @app.on_event("shutdown")
@@ -1710,6 +1763,11 @@ async def event_detail(event_id: int) -> dict[str, object]:
     return event
 
 
+@app.get("/diagnostics/webhooks")
+async def webhook_diagnostics() -> dict[str, object]:
+    return await service.diagnose_webhooks()
+
+
 @app.get("/watched-prs")
 async def watched_prs() -> list[dict[str, object]]:
     return await storage.list_watched_prs()
@@ -1719,6 +1777,12 @@ async def watched_prs() -> list[dict[str, object]]:
 async def watched_repos() -> list[dict[str, object]]:
     watches = await storage.list_watched_repos()
     return [enrich_watched_repo(watch) for watch in watches]
+
+
+@app.post("/watched-repos/sync")
+async def sync_watched_repos() -> dict[str, object]:
+    synced_ids = await service.sync_enabled_repo_webhooks(reason="manual")
+    return {"status": "synced", "watch_ids": synced_ids}
 
 
 @app.post("/watched-repos")
@@ -1806,6 +1870,14 @@ async def delete_watched_repo(watch_id: int) -> dict[str, str]:
         details={"watch_id": watch_id},
     )
     return {"status": "removed"}
+
+
+@app.get("/watched-repos/{watch_id}/diagnostics")
+async def watched_repo_diagnostics(watch_id: int) -> dict[str, object]:
+    diagnostic = await service.diagnose_webhook_watch(watch_id)
+    if diagnostic.get("status") == "missing":
+        raise HTTPException(status_code=404, detail="Watched repo not found")
+    return diagnostic
 
 
 @app.post("/watched-repos/{watch_id}/webhook")
