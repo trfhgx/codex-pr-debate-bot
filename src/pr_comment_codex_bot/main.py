@@ -936,12 +936,13 @@ DASHBOARD_HTML = """
         }
 
         eventsList.innerHTML = allEvents.slice(0, 5).map(event => {
+          const eventId = String(event.id ?? "");
           const isSuccess = ['received', 'polled', 'watched', 'created', 'updated', 'ready_to_implement', 'implementing', 'implemented'].includes(event.status);
           const statusClass = isSuccess ? 'status-success' : 'status-failed';
           return `
-            <div class="event-item" data-id="${esc(event.id)}">
+            <div class="event-item" data-id="${esc(eventId)}">
               <div class="event-left">
-                <span class="event-id">${esc(event.id.slice(0, 8))}</span>
+                <span class="event-id">${esc(eventId.slice(0, 8))}</span>
                 <span class="event-summary">${esc(event.summary)}</span>
               </div>
               <span class="event-status ${statusClass}">${esc(event.status)}</span>

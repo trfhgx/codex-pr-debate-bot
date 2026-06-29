@@ -372,6 +372,9 @@ class RepoWebhookDebateE2ETests(unittest.TestCase):
                 set(github_state.created_hooks[0]["events"]),
                 {"issue_comment", "pull_request"},
             )
+            dashboard_html = client.get("/").text
+            self.assertIn("const eventId = String(event.id ?? \"\");", dashboard_html)
+            self.assertNotIn("event.id.slice", dashboard_html)
 
             payload = {
                 "action": "created",
