@@ -1,4 +1,7 @@
-.PHONY: start listener test lint
+.PHONY: setup start listener test lint
+
+setup:
+	bash scripts/setup.sh
 
 start:
 	uv run python scripts/start_app.py
