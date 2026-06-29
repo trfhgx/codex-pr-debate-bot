@@ -70,10 +70,14 @@ GitHub issue_comment / pull_request webhook
 ```bash
 git clone https://github.com/YOUR_ORG/pr-comment-codex-bot.git
 cd pr-comment-codex-bot
-cp .env.example .env
-uv sync
+make setup
 make start
 ```
+
+`make setup` installs `cloudflared` (via Homebrew), syncs Python deps with `uv`,
+creates `.env` if needed, then walks you through holder/replier logins and tokens
+with links to create GitHub PATs. You can also configure accounts later in the
+dashboard.
 
 `make start` will:
 
@@ -102,15 +106,21 @@ Copy `.env.example` to `.env` and fill in the values you need.
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
 | `GITHUB_WEBHOOK_SECRET` | *(empty)* | HMAC secret for webhook verification. Auto-generated on first repo watch if empty |
-| `GITHUB_TOKEN` | — | Personal access token or fine-grained token |
-| `GITHUB_USE_GH_CLI_TOKEN` | `true` | Fall back to `gh auth token` when no token is set |
-| `GITHUB_APP_ID` | — | GitHub App ID (recommended for production) |
+| `GITHUB_HOLDER_LOGIN` | — | Holder account login (repo admin) |
+| `GITHUB_HOLDER_TOKEN` | — | Holder token for webhook setup and replier invites |
+| `GITHUB_HOLDER_USE_GH_CLI_TOKEN` | `false` | Use `gh auth token` for the holder account |
+| `GITHUB_HOLDER_COLLABORATOR_PERMISSION` | `admin` | Permission granted when inviting the replier |
+| `GITHUB_REPLIER_LOGIN` | — | Replier account login (posts PR comments) |
+| `GITHUB_REPLIER_TOKEN` | — | Replier token for posting comments |
+| `GITHUB_REPLIER_USE_GH_CLI_TOKEN` | `true` | Use `gh auth token` for the replier account |
+| `GITHUB_APP_ID` | — | GitHub App ID (optional production auth) |
 | `GITHUB_PRIVATE_KEY` / `GITHUB_PRIVATE_KEY_PATH` | — | App private key PEM |
-| `GITHUB_BOT_LOGIN` | — | Bot account to invite when adding watched repos |
-| `GITHUB_REPO_ADMIN_TOKEN` | — | Admin token for collaborator bootstrap |
-| `GITHUB_REPO_ADMIN_USE_GH_CLI_TOKEN` | `false` | Use `gh auth token` for admin bootstrap |
 | `GITHUB_TRIGGER_PHRASE` | `codex` | Marker word; empty string = all PR comments on watched repos |
 | `GITHUB_POLL_INTERVAL_SECONDS` | `0` | Legacy PR polling interval; `0` disables automatic polling |
+
+Configure holder and replier accounts in the dashboard under **GitHub Accounts**, or
+set the env vars above. Legacy names (`GITHUB_BOT_LOGIN`, `GITHUB_TOKEN`,
+`GITHUB_REPO_ADMIN_TOKEN`, etc.) still work.
 
 ### Codex
 
@@ -135,19 +145,22 @@ Copy `.env.example` to `.env` and fill in the values you need.
 
 ## GitHub setup
 
-### Option A — Personal token (fastest for local dev)
+### Option A — Two-account local dev (recommended)
 
-1. Create a token with `repo` scope (or fine-grained repo admin + webhook).
-2. Set `GITHUB_TOKEN` in `.env`, or run `gh auth login` and leave
-   `GITHUB_USE_GH_CLI_TOKEN=true`.
-3. Start the bot and add your repo in the dashboard.
+1. **Holder** — your personal GitHub account with admin on target repos. Set
+   `GITHUB_HOLDER_LOGIN` and either `GITHUB_HOLDER_TOKEN` or
+   `GITHUB_HOLDER_USE_GH_CLI_TOKEN=true`.
+2. **Replier** — the bot account that posts comments. Set `GITHUB_REPLIER_LOGIN`
+   and either `GITHUB_REPLIER_TOKEN` or `GITHUB_REPLIER_USE_GH_CLI_TOKEN=true`.
+3. Open the dashboard **GitHub Accounts** section to save both identities.
+4. Add a watched repo; the holder invites the replier and configures the webhook.
 
 ### Option B — GitHub App (recommended for teams)
 
 1. Create a GitHub App with webhook + pull request + issues permissions.
 2. Set `GITHUB_APP_ID` and `GITHUB_PRIVATE_KEY` (or path).
 3. Install the app on target repositories.
-4. Set `GITHUB_BOT_LOGIN` to the app's bot username.
+4. Set `GITHUB_REPLIER_LOGIN` to the app's bot username.
 
 ### Webhook events
 
@@ -274,6 +287,8 @@ Status values: `needs_answer`, `ready_to_implement`, `blocked`.
 | `GET` | `/` | Dashboard UI |
 | `GET` | `/healthz` | Health check |
 | `GET` | `/tunnel-info` | Current tunnel metadata |
+| `GET` | `/settings/accounts` | Holder/replier account status (no secrets) |
+| `PUT` | `/settings/accounts` | Save holder/replier settings to `.env` |
 | `GET` | `/events` | List recent events |
 | `GET` | `/events/{id}` | Event detail |
 | `GET` | `/watched-repos` | List watched repositories |
