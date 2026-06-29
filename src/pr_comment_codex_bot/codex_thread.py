@@ -51,6 +51,19 @@ Return a JSON object with this shape:
 """
 
 
+class CodexThreadTurnError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        thread_id: str | None = None,
+        raw: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.thread_id = thread_id
+        self.raw = raw or {}
+
+
 class CodexThreadClient:
     """Codex execution adapter.
 
@@ -101,7 +114,12 @@ class CodexThreadClient:
             "final_message": result["final_text"],
             "thread": result["thread"],
         }
-        return self._parse_debate_result(raw)
+        try:
+            return self._parse_debate_result(raw)
+        except Exception as exc:
+            raise CodexThreadTurnError(
+                str(exc), thread_id=result["thread_id"], raw=raw
+            ) from exc
 
     async def start_implementation(
         self,
@@ -228,7 +246,10 @@ class CodexThreadClient:
                     "input": [{"type": "text", "text": prompt}],
                 },
             )
-            final_text = await self._wait_for_final_text(request)
+            try:
+                final_text = await self._wait_for_final_text(request)
+            except Exception as exc:
+                raise CodexThreadTurnError(str(exc), thread_id=thread_id) from exc
             return {"thread_id": thread_id, "thread": thread, "final_text": final_text}
 
     async def _wait_for_final_text(self, request: "_JsonRpcClient") -> str:

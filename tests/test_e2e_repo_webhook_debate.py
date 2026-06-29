@@ -594,6 +594,7 @@ class RepoWebhookDebateE2ETests(unittest.TestCase):
             TestClient(main.app) as client,
         ):
             import pr_comment_codex_bot.service as service_module
+            from pr_comment_codex_bot.codex_thread import CodexThreadTurnError
 
             class FailingCodexThreadClient:
                 def __init__(self, settings: Any) -> None:
@@ -606,7 +607,10 @@ class RepoWebhookDebateE2ETests(unittest.TestCase):
                     session: Any,
                     comment_style_guide: str,
                 ) -> Any:
-                    raise ValueError("Codex thread completed without a final answer")
+                    raise CodexThreadTurnError(
+                        "Codex thread completed without a final answer",
+                        thread_id="codex-thread-failed-1",
+                    )
 
             add_response = client.post(
                 "/watched-repos", json={"url": "https://github.com/acme/widgets"}
@@ -637,13 +641,29 @@ class RepoWebhookDebateE2ETests(unittest.TestCase):
 
             events = client.get("/events?limit=1").json()
             self.assertEqual(events[0]["status"], "failed")
-            self.assertIn("Processing failed: ValueError", events[0]["summary"])
+            self.assertIn("Processing failed: CodexThreadTurnError", events[0]["summary"])
+            self.assertEqual(
+                events[0]["details"]["debate_thread_id"],
+                "codex-thread-failed-1",
+            )
 
             current_sessions = client.get("/sessions/current").json()
             self.assertEqual(current_sessions[0]["repo_full_name"], "acme/widgets")
             self.assertEqual(current_sessions[0]["pr_number"], 42)
             self.assertEqual(current_sessions[0]["status"], "blocked")
+            self.assertEqual(
+                current_sessions[0]["threads"][0]["thread_id"],
+                "codex-thread-failed-1",
+            )
+            self.assertEqual(
+                current_sessions[0]["threads"][0]["open_url"],
+                "/codex/threads/codex-thread-failed-1/open",
+            )
             debug_sessions = client.get("/debug/sessions").json()
+            self.assertEqual(
+                debug_sessions[0]["state"]["debate_thread_id"],
+                "codex-thread-failed-1",
+            )
             self.assertIn(
                 "Codex thread completed without a final answer",
                 debug_sessions[0]["state"]["unresolved_decisions"][0],

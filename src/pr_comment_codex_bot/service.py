@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 from pydantic import SecretStr
 
-from .codex_thread import CodexThreadClient
+from .codex_thread import CodexThreadClient, CodexThreadTurnError
 from .comments import (
     implementation_finished_comment,
     is_marked_bot_comment,
@@ -476,6 +476,8 @@ class PRCommentService:
             session.status = "blocked"
             error_message = f"Debate failed: {type(exc).__name__}: {exc}"
             session.unresolved_decisions = [error_message]
+            if isinstance(exc, CodexThreadTurnError) and exc.thread_id:
+                session.debate_thread_id = exc.thread_id
             await self.storage.save_session(session)
             await self._update_event(
                 event_id,
@@ -485,6 +487,7 @@ class PRCommentService:
                     "error": str(exc),
                     "repo_full_name": repo_full_name,
                     "pr_number": pr_number,
+                    "debate_thread_id": session.debate_thread_id,
                 },
             )
             return

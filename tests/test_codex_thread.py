@@ -5,15 +5,16 @@ import unittest
 from typing import Any
 from unittest.mock import patch
 
-from pr_comment_codex_bot.codex_thread import CodexThreadClient
+from pr_comment_codex_bot.codex_thread import CodexThreadClient, CodexThreadTurnError
 from pr_comment_codex_bot.settings import Settings
 
 
 class FakeWebSocket:
-    def __init__(self) -> None:
+    def __init__(self, *, include_final_answer: bool = True) -> None:
         self.sent_methods: list[str] = []
         self.sent_params: list[dict[str, Any]] = []
         self._messages: list[str] = []
+        self.include_final_answer = include_final_answer
 
     async def send(self, raw: str) -> None:
         message = json.loads(raw)
@@ -31,21 +32,22 @@ class FakeWebSocket:
             )
         elif method == "turn/start":
             self._messages.append(self._response(message["id"], {}))
-            self._messages.append(
-                json.dumps(
-                    {
-                        "jsonrpc": "2.0",
-                        "method": "item/completed",
-                        "params": {
-                            "item": {
-                                "type": "agentMessage",
-                                "phase": "final_answer",
-                                "text": "done",
-                            }
-                        },
-                    }
+            if self.include_final_answer:
+                self._messages.append(
+                    json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "method": "item/completed",
+                            "params": {
+                                "item": {
+                                    "type": "agentMessage",
+                                    "phase": "final_answer",
+                                    "text": "done",
+                                }
+                            },
+                        }
+                    )
                 )
-            )
             self._messages.append(
                 json.dumps(
                     {
@@ -143,6 +145,27 @@ class CodexThreadClientTests(unittest.IsolatedAsyncioTestCase):
         name_params = ws.sent_params[2]
         self.assertEqual(name_params["threadId"], "thread-new")
         self.assertEqual(name_params["name"], "Debate acme/widgets#42")
+
+    async def test_turn_error_keeps_started_thread_id(self) -> None:
+        ws = FakeWebSocket(include_final_answer=False)
+        client = CodexThreadClient(Settings(codex_thread_timeout_seconds=1))
+
+        with patch(
+            "pr_comment_codex_bot.codex_thread.websockets.connect",
+            return_value=FakeConnect(ws),
+        ):
+            with self.assertRaises(CodexThreadTurnError) as error:
+                await client._run_codex_thread_turn(
+                    prompt="first",
+                    sandbox="read-only",
+                    effort="medium",
+                )
+
+        self.assertEqual(error.exception.thread_id, "thread-new")
+        self.assertIn(
+            "completed without a final answer",
+            str(error.exception),
+        )
 
 
 if __name__ == "__main__":
