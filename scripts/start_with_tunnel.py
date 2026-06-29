@@ -19,6 +19,9 @@ except ImportError:  # pragma: no cover - script still works without dotenv.
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PUBLIC_URL_RE = re.compile(r"https://[a-zA-Z0-9.-]+")
+PUBLIC_HEALTH_PATH = "/healthz"
+PUBLIC_HEALTH_INTERVAL_SECONDS = 15
+PUBLIC_HEALTH_FAILURE_LIMIT = 3
 
 
 def main() -> None:
@@ -69,28 +72,54 @@ def main() -> None:
                 "using dashboard polling. With Homebrew: brew install cloudflared"
             )
 
-        tunnel = subprocess_start(
-            tunnel_command.command,
-            env=os.environ.copy(),
-            capture_output=True,
-        )
-        public_url = asyncio.run(
-            wait_for_public_url(
-                tunnel,
-                provider=tunnel_command.provider,
-                tunnel_info_path=tunnel_info_path,
-            )
-        )
-        webhook_url = f"{public_url.rstrip('/')}/webhooks/github"
-        print()
-        print("Tunnel ready.")
-        print(f"Dashboard:   http://{host}:{port}/")
-        print(f"Webhook URL: {webhook_url}")
-        print()
-        print("Paste the webhook URL into GitHub with content type application/json.")
-        print("Press Ctrl-C to stop the server and tunnel.")
-        print()
-        wait_forever(server, tunnel)
+        while True:
+            try:
+                tunnel = subprocess_start(
+                    tunnel_command.command,
+                    env=os.environ.copy(),
+                    capture_output=True,
+                )
+                public_url = asyncio.run(
+                    wait_for_public_url(
+                        tunnel,
+                        provider=tunnel_command.provider,
+                        tunnel_info_path=tunnel_info_path,
+                    )
+                )
+                webhook_url = f"{public_url.rstrip('/')}/webhooks/github"
+                print()
+                print("Tunnel ready.")
+                print(f"Dashboard:   http://{host}:{port}/")
+                print(f"Webhook URL: {webhook_url}")
+                print()
+                print("Paste the webhook URL into GitHub with content type application/json.")
+                print("Press Ctrl-C to stop the server and tunnel.")
+                print()
+                wait_forever(
+                    server,
+                    tunnel,
+                    public_url=public_url,
+                    tunnel_info_path=tunnel_info_path,
+                    provider=tunnel_command.provider,
+                )
+            except RuntimeError as exc:
+                if server.poll() is not None:
+                    raise
+                print(f"Restarting tunnel after failure: {exc}")
+                write_tunnel_info(
+                    tunnel_info_path,
+                    {
+                        "status": "restarting",
+                        "provider": tunnel_command.provider,
+                        "public_url": None,
+                        "message": str(exc),
+                        "restarting_at": time.time(),
+                    },
+                )
+                terminate_process(tunnel)
+                tunnel = None
+                time.sleep(3)
+                continue
     finally:
         write_tunnel_info(
             tunnel_info_path,
@@ -196,6 +225,7 @@ async def wait_for_public_url(process, *, provider: str, tunnel_info_path: Path)
         if match:
             candidate = match.group(0).rstrip("/")
             if is_public_tunnel_url(provider, candidate):
+                wait_for_public_tunnel(candidate)
                 public_url = candidate
                 break
     if not public_url:
@@ -213,6 +243,24 @@ async def wait_for_public_url(process, *, provider: str, tunnel_info_path: Path)
     return public_url
 
 
+def wait_for_public_tunnel(public_url: str) -> None:
+    deadline = time.monotonic() + 45
+    while time.monotonic() < deadline:
+        if public_tunnel_ready(public_url):
+            return
+        time.sleep(1)
+    raise RuntimeError(f"Public tunnel did not become reachable at {public_url}")
+
+
+def public_tunnel_ready(public_url: str) -> bool:
+    health_url = f"{public_url.rstrip('/')}{PUBLIC_HEALTH_PATH}"
+    try:
+        with urlopen(health_url, timeout=5) as response:
+            return response.status == 200
+    except Exception:
+        return False
+
+
 def is_public_tunnel_url(provider: str, url: str) -> bool:
     if provider == "cloudflared":
         return "trycloudflare.com" in url
@@ -223,11 +271,42 @@ def is_public_tunnel_url(provider: str, url: str) -> bool:
     return True
 
 
-def wait_forever(*processes) -> None:
+def wait_forever(
+    *processes,
+    public_url: str | None = None,
+    tunnel_info_path: Path | None = None,
+    provider: str | None = None,
+) -> None:
+    tunnel_failures = 0
+    next_public_health_check = 0.0
     while True:
         for process in processes:
             if process and process.poll() is not None:
                 raise RuntimeError("A managed process exited")
+        if public_url and time.monotonic() >= next_public_health_check:
+            if public_tunnel_ready(public_url):
+                tunnel_failures = 0
+            else:
+                tunnel_failures += 1
+                if tunnel_info_path:
+                    write_tunnel_info(
+                        tunnel_info_path,
+                        {
+                            "status": "unhealthy",
+                            "provider": provider,
+                            "public_url": public_url,
+                            "github_webhook_url": f"{public_url}/webhooks/github",
+                            "failed_checks": tunnel_failures,
+                            "checked_at": time.time(),
+                        },
+                    )
+                if tunnel_failures >= PUBLIC_HEALTH_FAILURE_LIMIT:
+                    raise RuntimeError(
+                        f"Public tunnel health check failed {tunnel_failures} times"
+                    )
+            next_public_health_check = (
+                time.monotonic() + PUBLIC_HEALTH_INTERVAL_SECONDS
+            )
         time.sleep(1)
 
 

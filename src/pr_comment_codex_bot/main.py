@@ -150,8 +150,8 @@ DASHBOARD_HTML = """
       height: auto;
     }
     .events-card {
-      grid-column: span 2;
-      min-height: 350px;
+      grid-column: 1 / -1;
+      min-height: 560px;
       height: auto;
     }
 
@@ -271,7 +271,7 @@ DASHBOARD_HTML = """
     }
     .repo-item {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto auto;
+      grid-template-columns: minmax(0, 1fr) auto;
       gap: 12px;
       align-items: center;
       font-size: 12px;
@@ -279,6 +279,11 @@ DASHBOARD_HTML = """
       padding: 10px 14px;
       border-radius: 16px;
       border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    .repo-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
     }
     .repo-item.disconnected {
       border-color: rgba(248, 113, 113, 0.35);
@@ -372,6 +377,24 @@ DASHBOARD_HTML = """
     }
     .repo-delete:hover {
       color: #ef4444;
+    }
+    .repo-sync {
+      border: 1px solid rgba(255, 255, 255, 0.10);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      padding: 5px 10px;
+      text-transform: uppercase;
+      transition: color 0.2s, border-color 0.2s, background 0.2s;
+    }
+    .repo-sync:hover {
+      background: rgba(198, 255, 0, 0.12);
+      border-color: rgba(198, 255, 0, 0.35);
+      color: var(--accent-green);
     }
     .repo-add-form {
       display: flex;
@@ -472,7 +495,7 @@ DASHBOARD_HTML = """
       gap: 10px;
       margin-top: 14px;
       overflow-y: auto;
-      max-height: 250px;
+      max-height: 460px;
       padding-right: 4px;
     }
     .events-list::-webkit-scrollbar {
@@ -502,6 +525,8 @@ DASHBOARD_HTML = """
       display: flex;
       flex-direction: column;
       gap: 2px;
+      min-width: 0;
+      flex: 1;
     }
     .event-id {
       font-family: monospace;
@@ -510,7 +535,7 @@ DASHBOARD_HTML = """
     }
     .event-summary {
       color: var(--text-white);
-      max-width: 500px;
+      max-width: 100%;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -699,7 +724,7 @@ DASHBOARD_HTML = """
         grid-template-columns: 1fr;
       }
       .events-card {
-        grid-column: span 1;
+        grid-column: 1 / -1;
       }
     }
   </style>
@@ -935,7 +960,7 @@ DASHBOARD_HTML = """
           return;
         }
 
-        eventsList.innerHTML = allEvents.slice(0, 5).map(event => {
+        eventsList.innerHTML = allEvents.slice(0, 12).map(event => {
           const eventId = String(event.id ?? "");
           const isSuccess = ['received', 'polled', 'watched', 'created', 'updated', 'ready_to_implement', 'implementing', 'implemented'].includes(event.status);
           const statusClass = isSuccess ? 'status-success' : 'status-failed';
@@ -994,11 +1019,14 @@ DASHBOARD_HTML = """
                   <span class="repo-status-dot"></span>${esc(label)}
                 </span>
               </div>
-              <label class="repo-toggle" title="${enabled ? "Turn off this repo" : "Turn on this repo"}">
-                <input type="checkbox" data-toggle="${esc(watch.id)}" ${enabled ? "checked" : ""}>
-                <span class="repo-toggle-slider"></span>
-              </label>
-              <button class="repo-delete" data-delete="${esc(watch.id)}" title="Remove repo">×</button>
+              <div class="repo-actions">
+                <button class="repo-sync" data-sync="${esc(watch.id)}" title="Force webhook setup for this repo">Sync</button>
+                <label class="repo-toggle" title="${enabled ? "Turn off this repo" : "Turn on this repo"}">
+                  <input type="checkbox" data-toggle="${esc(watch.id)}" ${enabled ? "checked" : ""}>
+                  <span class="repo-toggle-slider"></span>
+                </label>
+                <button class="repo-delete" data-delete="${esc(watch.id)}" title="Remove repo">×</button>
+              </div>
             </div>
           `;
         }).join("");
@@ -1034,6 +1062,31 @@ DASHBOARD_HTML = """
             if (confirm("Stop watching this repository?")) {
               await fetch(`/watched-repos/${button.getAttribute("data-delete")}`, { method: "DELETE" });
               await refreshAll();
+            }
+          });
+        });
+
+        document.querySelectorAll("button[data-sync]").forEach(button => {
+          button.addEventListener("click", async (e) => {
+            e.stopPropagation();
+            const watchId = button.getAttribute("data-sync");
+            button.disabled = true;
+            const originalText = button.textContent;
+            button.textContent = "Syncing";
+            try {
+              const response = await fetch(`/watched-repos/${watchId}/webhook`, {
+                method: "POST"
+              });
+              if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail || "Failed to sync webhook");
+              }
+              await refreshAll();
+            } catch (err) {
+              alert(err.message || "Failed to sync webhook");
+            } finally {
+              button.disabled = false;
+              button.textContent = originalText;
             }
           });
         });

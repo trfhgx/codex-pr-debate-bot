@@ -375,6 +375,12 @@ class RepoWebhookDebateE2ETests(unittest.TestCase):
             dashboard_html = client.get("/").text
             self.assertIn("const eventId = String(event.id ?? \"\");", dashboard_html)
             self.assertNotIn("event.id.slice", dashboard_html)
+            self.assertIn("grid-column: 1 / -1", dashboard_html)
+            self.assertIn("min-height: 560px", dashboard_html)
+            self.assertIn("max-height: 460px", dashboard_html)
+            self.assertIn("max-width: 100%", dashboard_html)
+            self.assertIn("allEvents.slice(0, 12)", dashboard_html)
+            self.assertIn('data-sync="${esc(watch.id)}"', dashboard_html)
 
             payload = {
                 "action": "created",
