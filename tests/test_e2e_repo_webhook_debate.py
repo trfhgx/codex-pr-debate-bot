@@ -418,6 +418,9 @@ class RepoWebhookDebateE2ETests(unittest.TestCase):
             dashboard_html = client.get("/").text
             self.assertIn("const eventId = String(event.id ?? \"\");", dashboard_html)
             self.assertNotIn("event.id.slice", dashboard_html)
+            self.assertIn(".card:not(.events-card):hover", dashboard_html)
+            self.assertIn(".events-card:hover", dashboard_html)
+            self.assertIn("transform: none", dashboard_html)
             self.assertIn("grid-column: 1 / -1", dashboard_html)
             self.assertIn("width: calc(100vw - 40px)", dashboard_html)
             self.assertIn("margin-left: calc(50% - 50vw + 20px)", dashboard_html)
@@ -428,6 +431,10 @@ class RepoWebhookDebateE2ETests(unittest.TestCase):
             self.assertIn('data-sync="${esc(watch.id)}"', dashboard_html)
             self.assertIn('data-diagnose="${esc(watch.id)}"', dashboard_html)
             self.assertIn('id="sync-all-btn"', dashboard_html)
+            self.assertIn('tunnelStatus === "ready"', dashboard_html)
+            self.assertIn('["starting", "restarting"].includes(tunnelStatus)', dashboard_html)
+            self.assertIn('tunnelStatus === "unhealthy"', dashboard_html)
+            self.assertIn('tunnelStatus === "invalid"', dashboard_html)
 
             async def healthy_tunnel(_: str | None) -> dict[str, Any]:
                 return {

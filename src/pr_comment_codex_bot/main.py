@@ -123,8 +123,11 @@ DASHBOARD_HTML = """
       border: 1px solid var(--card-border);
       transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
     }
-    .card:hover {
+    .card:not(.events-card):hover {
       transform: scale(1.01);
+    }
+    .events-card:hover {
+      transform: none;
     }
     .card-header {
       display: flex;
@@ -1191,23 +1194,47 @@ DASHBOARD_HTML = """
         const response = await fetch("/tunnel-info", { cache: "no-store" });
         const info = await response.json();
         currentTunnelWebhookUrl = info.github_webhook_url || null;
-        
-        if (info.public_url) {
+
+        const tunnelStatus = info.status || (info.public_url ? "ready" : "not_started");
+        const provider = info.provider ? ` via ${info.provider}` : "";
+        const tunnelMessage = info.message || info.error || "";
+        statusPill.style.background = "#000000";
+
+        if (tunnelStatus === "ready" && info.public_url) {
           statusPill.textContent = "ONLINE";
-          statusPill.style.background = "#000000";
           statusPill.style.color = "var(--accent-green)";
-          statusVal.textContent = "↑ ACTIVE";
-          statusSub.textContent = "Tunnel connection healthy";
-          
+          statusVal.textContent = "ACTIVE";
+          statusSub.textContent = `Tunnel ready${provider}`;
           tunnelUrlEl.textContent = info.github_webhook_url;
           tunnelContainer.onclick = () => copyToClipboard(info.github_webhook_url, tunnelContainer);
+        } else if (["starting", "restarting"].includes(tunnelStatus)) {
+          statusPill.textContent = "STARTING";
+          statusPill.style.color = "var(--accent-yellow)";
+          statusVal.textContent = tunnelStatus === "restarting" ? "RETRYING" : "CREATING";
+          statusSub.textContent = tunnelMessage || `Tunnel ${tunnelStatus}${provider}`;
+          tunnelUrlEl.textContent = "Waiting for public webhook URL";
+          tunnelContainer.onclick = null;
+        } else if (tunnelStatus === "unhealthy") {
+          statusPill.textContent = "UNHEALTHY";
+          statusPill.style.color = "var(--accent-orange)";
+          statusVal.textContent = "CHECKING";
+          statusSub.textContent = tunnelMessage || `Tunnel health checks failing${provider}`;
+          tunnelUrlEl.textContent = info.github_webhook_url || "Webhook URL unavailable";
+          tunnelContainer.onclick = info.github_webhook_url
+            ? () => copyToClipboard(info.github_webhook_url, tunnelContainer)
+            : null;
+        } else if (tunnelStatus === "invalid") {
+          statusPill.textContent = "INVALID";
+          statusPill.style.color = "#f87171";
+          statusVal.textContent = "BAD STATE";
+          statusSub.textContent = "Tunnel info file could not be parsed";
+          tunnelUrlEl.textContent = "Restart the listener";
+          tunnelContainer.onclick = null;
         } else {
           statusPill.textContent = "OFFLINE";
-          statusPill.style.background = "#000000";
           statusPill.style.color = "#f87171";
-          statusVal.textContent = "↓ OFFLINE";
-          statusSub.textContent = "No active tunnel forwarding";
-          
+          statusVal.textContent = tunnelStatus === "stopped" ? "STOPPED" : "OFFLINE";
+          statusSub.textContent = tunnelMessage || "No active tunnel forwarding";
           const localUrl = "http://127.0.0.1:8088/webhooks/github";
           tunnelUrlEl.textContent = localUrl;
           tunnelContainer.onclick = () => copyToClipboard(localUrl, tunnelContainer);
