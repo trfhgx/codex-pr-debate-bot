@@ -1,0 +1,50 @@
+[project]
+name = "pr-comment-codex-bot"
+version = "0.1.0"
+description = "GitHub PR comment bot that launches Codex debate and implementation through Codex app-server threads."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+keywords = ["github", "codex", "pull-request", "webhook", "fastapi", "ai-agent"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Version Control :: Git",
+]
+dependencies = [
+    "aiosqlite>=0.22.1",
+    "fastapi>=0.135.1",
+    "httpx>=0.28.1",
+    "pydantic>=2.12.5",
+    "pydantic-settings>=2.13.1",
+    "pyjwt[crypto]>=2.12.1",
+    "python-dotenv>=1.2.2",
+    "uvicorn>=0.41.0",
+    "websockets>=15.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.15.7",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
