@@ -10,7 +10,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT" /></a>
 </p>
 
-A self-hosted GitHub bot that turns PR comments into structured Codex work using your local Codex app-server. It uses your Codex subscription instead of direct API calls, keeps debate replies on the same Codex thread, launches implementation in an inspectable Codex thread, and debates the request before coding so you and Codex reach shared understanding first.
+A self-hosted GitHub bot that turns PR comments into structured Codex work using your local Codex app-server. It uses your Codex subscription instead of direct API calls, keeps debate replies on the same Codex thread, launches each implementation run in a fresh inspectable Codex thread, and debates the request before coding so you and Codex reach shared understanding first.
 
 ---
 
@@ -27,7 +27,7 @@ Instead of writing code immediately (which often leads to bugs or misaligned fea
 1. **The Handshake** — Mention `codex` in a PR comment to wake up the bot.
 2. **The Cozy Debate** — It reads the PR context and posts a checklist with 2–3 focused questions to ensure alignment.
 3. **The Feedback** — You reply with your answers, continuing the conversation in the same Codex debate thread.
-4. **The Implementation** — Once there is shared understanding, the bot starts an implementation thread to write, test, and commit the code directly to your branch.
+4. **The Implementation** — Once there is shared understanding, the bot starts a fresh implementation thread to write, test, and commit the code directly to your branch.
 
 ---
 
@@ -102,7 +102,7 @@ sequenceDiagram
     Codex->>Codex: Evaluate shared understanding
     Codex-->>Bot: Returns status: ready_to_implement + brief
     
-    Bot->>Codex: Start Implementation Thread (send brief)
+    Bot->>Codex: Start fresh implementation thread (send brief)
     Codex->>Codex: Generate code changes & write to workspace
     Codex-->>Bot: Returns execution results
     Bot->>GH: Pushes commits & posts final change summary comment
@@ -116,7 +116,7 @@ sequenceDiagram
 - **Codex subscription workflow** — routes through your local Codex app-server instead of the API
 - **Debate-first loop** — asks targeted questions before implementation instead of blindly changing code
 - **Same-thread debate** — follow-up PR replies continue the original Codex debate thread
-- **Inspectable implementation** — code changes happen in a Codex thread you can open and review
+- **Inspectable implementation** — each implementation run happens in a fresh Codex thread you can open and review
 - **Flexible GitHub auth** — personal token, `gh` CLI token, or GitHub App JWT
 - **Bot bootstrap** — optionally invite your bot account when adding a watched repo
 - **Comment style guide** — customize tone via `docs/comment-style.md`
@@ -286,11 +286,15 @@ repo is required.
 
 ## Codex thread contract
 
-The debate phase is stateful at the Codex thread level. The first triggered PR
-comment creates a debate thread. Later human replies on the same PR call
-`turn/start` with the saved `debate_thread_id`, so Codex keeps its thread-local
-context and cache. Implementation intentionally starts a separate thread so the
-code-writing work is easy to inspect independently.
+The PR session is the durable organizer for one GitHub PR. The debate phase is
+stateful at the Codex thread level: the first triggered PR comment creates a
+debate thread, and later human replies on the same PR call `turn/start` with the
+saved `debate_thread_id`, so Codex keeps its thread-local context and cache.
+
+Implementation intentionally starts a fresh Codex thread on every run. The
+session stores only the latest implementation thread link for inspection; older
+implementation attempts remain in Codex but are not reused as context for the
+next implementation.
 
 ### Debate payload
 
@@ -361,6 +365,10 @@ Status values: `needs_answer`, `ready_to_implement`, `blocked`.
 | `GET` | `/tunnel-info` | Current tunnel metadata |
 | `GET` | `/settings/accounts` | Holder/replier account status (no secrets) |
 | `PUT` | `/settings/accounts` | Save holder/replier settings to `.env` |
+| `GET` | `/sessions` | Current sessions UI |
+| `GET` | `/sessions/current` | Current PR sessions and tracked thread links |
+| `DELETE` | `/sessions/{owner}/{repo}/{pr}/threads/{kind}` | Clear a tracked `debate` or `implementation` thread link |
+| `GET` | `/codex/threads/{thread_id}/open` | Open a tracked Codex thread in the desktop app |
 | `GET` | `/events` | List recent events |
 | `GET` | `/events/{id}` | Event detail |
 | `GET` | `/watched-repos` | List watched repositories |

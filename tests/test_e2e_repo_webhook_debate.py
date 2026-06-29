@@ -535,6 +535,7 @@ class RepoWebhookDebateE2ETests(unittest.TestCase):
             sessions_page = client.get("/sessions")
             self.assertEqual(sessions_page.status_code, 200)
             self.assertIn("Current Sessions", sessions_page.text)
+            self.assertIn("data-reset-thread", sessions_page.text)
             open_response = client.get(
                 "/codex/threads/codex-thread-debate-1/open",
                 follow_redirects=False,
@@ -549,6 +550,20 @@ class RepoWebhookDebateE2ETests(unittest.TestCase):
                 follow_redirects=False,
             )
             self.assertEqual(missing_open_response.status_code, 404)
+
+            clear_response = client.delete(
+                "/sessions/acme/widgets/42/threads/debate"
+            )
+            self.assertEqual(clear_response.status_code, 200, clear_response.text)
+            self.assertEqual(clear_response.json()["thread_id"], "codex-thread-debate-1")
+            current_sessions = client.get("/sessions/current").json()
+            self.assertIsNone(current_sessions[0]["threads"][0]["thread_id"])
+            self.assertIsNone(current_sessions[0]["threads"][0]["open_url"])
+            cleared_open_response = client.get(
+                "/codex/threads/codex-thread-debate-1/open",
+                follow_redirects=False,
+            )
+            self.assertEqual(cleared_open_response.status_code, 404)
 
             marked_payload = {
                 "action": "created",

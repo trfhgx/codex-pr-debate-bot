@@ -1541,7 +1541,7 @@ SESSIONS_HTML = """\n<!doctype html>
     <div class="topbar">
       <div>
         <h1>Current Sessions</h1>
-        <p class="sub">Active PR conversations, their debate thread, and their implementation thread. Open a thread to inspect it in Codex.</p>
+        <p class="sub">Active PR conversations, their current debate thread, and their latest implementation thread. Debate resumes for continuity; implementation runs start fresh and replace the latest link.</p>
       </div>
       <nav class="nav">
         <a class="button" href="/">Dashboard</a>
@@ -1571,6 +1571,8 @@ SESSIONS_HTML = """\n<!doctype html>
     }
 
     function renderThread(thread) {
+      const [repoOwner, repoName] = String(thread.repo_full_name || "").split("/");
+      const resetUrl = `/sessions/${encodeURIComponent(repoOwner || "")}/${encodeURIComponent(repoName || "")}/${encodeURIComponent(thread.pr_number)}/threads/${encodeURIComponent(thread.kind)}`;
       if (!thread.thread_id) {
         return `
           <div class="thread">
@@ -1585,7 +1587,10 @@ SESSIONS_HTML = """\n<!doctype html>
         <div class="thread">
           <div class="thread-head">
             <span class="thread-kind">${esc(thread.label)}</span>
-            <a class="button primary" href="${esc(thread.open_url)}">Open in Codex</a>
+            <div class="nav">
+              <a class="button primary" href="${esc(thread.open_url)}">Open in Codex</a>
+              <button data-reset-thread="${esc(resetUrl)}" data-thread-label="${esc(thread.label)}">Clear</button>
+            </div>
           </div>
           <div class="thread-id">${esc(thread.thread_id)}</div>
         </div>
@@ -1606,7 +1611,11 @@ SESSIONS_HTML = """\n<!doctype html>
             </div>
           </div>
           <div class="threads">
-            ${session.threads.map(renderThread).join("")}
+            ${session.threads.map(thread => renderThread({
+              ...thread,
+              repo_full_name: session.repo_full_name,
+              pr_number: session.pr_number
+            })).join("")}
           </div>
         </section>
       `;
@@ -1624,6 +1633,29 @@ SESSIONS_HTML = """\n<!doctype html>
         return;
       }
       sessionsEl.innerHTML = sessions.map(renderSession).join("");
+      document.querySelectorAll("button[data-reset-thread]").forEach(button => {
+        button.addEventListener("click", async () => {
+          const label = button.getAttribute("data-thread-label") || "thread";
+          if (!confirm(`Clear this ${label} link? The Codex thread is not deleted, only removed from this session view.`)) {
+            return;
+          }
+          button.disabled = true;
+          try {
+            const response = await fetch(button.getAttribute("data-reset-thread"), {
+              method: "DELETE"
+            });
+            if (!response.ok) {
+              const error = await response.json();
+              throw new Error(error.detail || "Could not clear thread link");
+            }
+            await loadSessions();
+          } catch (err) {
+            alert(err.message || "Could not clear thread link");
+          } finally {
+            button.disabled = false;
+          }
+        });
+      });
     }
 
     refreshBtn.addEventListener("click", loadSessions);
@@ -1788,6 +1820,52 @@ async def current_sessions_page() -> HTMLResponse:
 async def current_sessions() -> list[dict[str, object]]:
     sessions = await storage.list_sessions()
     return [_session_view(session) for session in sessions]
+
+
+@app.delete("/sessions/{repo_owner}/{repo_name}/{pr_number}/threads/{kind}")
+async def clear_session_thread(
+    repo_owner: str, repo_name: str, pr_number: int, kind: str
+) -> dict[str, object]:
+    if kind not in {"debate", "implementation"}:
+        raise HTTPException(
+            status_code=400, detail="Thread kind must be debate or implementation"
+        )
+    repo_full_name = f"{repo_owner}/{repo_name}"
+    session = await storage.load_session(
+        repo_full_name=repo_full_name, pr_number=pr_number
+    )
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if kind == "debate":
+        cleared_thread_id = session.debate_thread_id
+        session.debate_thread_id = None
+        session.debate_job_id = None
+    else:
+        cleared_thread_id = session.codex_thread_id
+        session.codex_thread_id = None
+        session.codex_job_id = None
+    await storage.save_session(session)
+    await storage.record_event(
+        source="dashboard",
+        event_type="session_thread_cleared",
+        delivery_id=None,
+        status="cleared",
+        summary=f"Cleared {kind} thread for {repo_full_name} PR #{pr_number}",
+        details={
+            "repo_full_name": repo_full_name,
+            "pr_number": pr_number,
+            "kind": kind,
+            "thread_id": cleared_thread_id,
+        },
+    )
+    return {
+        "status": "cleared",
+        "repo_full_name": repo_full_name,
+        "pr_number": pr_number,
+        "kind": kind,
+        "thread_id": cleared_thread_id,
+    }
 
 
 @app.get("/codex/threads/{thread_id}/open")

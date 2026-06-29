@@ -6,6 +6,7 @@ from typing import Any
 from unittest.mock import patch
 
 from pr_comment_codex_bot.codex_thread import CodexThreadClient, CodexThreadTurnError
+from pr_comment_codex_bot.models import PullRequestContext, PullRequestRef, RepoRef
 from pr_comment_codex_bot.settings import Settings
 
 
@@ -80,6 +81,21 @@ class FakeConnect:
 
 
 class CodexThreadClientTests(unittest.IsolatedAsyncioTestCase):
+    def _context(self) -> PullRequestContext:
+        return PullRequestContext(
+            repo=RepoRef(owner="acme", name="widgets", full_name="acme/widgets"),
+            pr=PullRequestRef(
+                number=42,
+                title="Add widget polish",
+                base_ref="main",
+                head_ref="feature/widgets",
+                head_sha="abc123",
+                clone_url="https://github.com/acme/widgets.git",
+                html_url="https://github.com/acme/widgets/pull/42",
+            ),
+            latest_comment={"body": "codex implement this"},
+        )
+
     async def test_existing_debate_thread_resumes_before_new_turn(self) -> None:
         ws = FakeWebSocket()
         client = CodexThreadClient(Settings(codex_thread_timeout_seconds=1))
@@ -145,6 +161,30 @@ class CodexThreadClientTests(unittest.IsolatedAsyncioTestCase):
         name_params = ws.sent_params[2]
         self.assertEqual(name_params["threadId"], "thread-new")
         self.assertEqual(name_params["name"], "Debate acme/widgets#42")
+
+    async def test_implementation_always_starts_fresh_thread(self) -> None:
+        ws = FakeWebSocket()
+        client = CodexThreadClient(Settings(codex_thread_timeout_seconds=1))
+
+        with patch(
+            "pr_comment_codex_bot.codex_thread.websockets.connect",
+            return_value=FakeConnect(ws),
+        ):
+            result = await client.start_implementation(
+                context=self._context(),
+                implementation_brief="Make the requested change.",
+                comment_style_guide="Be concise.",
+            )
+
+        self.assertEqual(result.thread_id, "thread-new")
+        self.assertEqual(
+            ws.sent_methods,
+            ["initialize", "thread/start", "thread/name/set", "turn/start"],
+        )
+        self.assertNotIn("thread/resume", ws.sent_methods)
+        turn_params = ws.sent_params[3]
+        self.assertEqual(turn_params["threadId"], "thread-new")
+        self.assertIn("Make the requested change.", turn_params["input"][0]["text"])
 
     async def test_turn_error_keeps_started_thread_id(self) -> None:
         ws = FakeWebSocket(include_final_answer=False)
