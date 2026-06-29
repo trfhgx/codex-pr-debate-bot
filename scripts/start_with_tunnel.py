@@ -5,6 +5,8 @@ import json
 import os
 import re
 import shutil
+import signal
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -34,6 +36,8 @@ def main() -> None:
     tunnel_info_path = Path(os.getenv("TUNNEL_INFO_PATH", "./tunnel-info.json"))
     if not tunnel_info_path.is_absolute():
         tunnel_info_path = PROJECT_ROOT / tunnel_info_path
+
+    release_server_port(port)
 
     tunnel_command = choose_tunnel_command(provider, port)
     write_tunnel_info(
@@ -179,8 +183,6 @@ def choose_tunnel_command(provider: str, port: int) -> TunnelCommand | None:
 
 
 def subprocess_start(command: list[str], env: dict[str, str], *, capture_output: bool):
-    import subprocess
-
     stdout = subprocess.PIPE if capture_output else None
     stderr = subprocess.STDOUT if capture_output else None
     return subprocess.Popen(
@@ -193,6 +195,81 @@ def subprocess_start(command: list[str], env: dict[str, str], *, capture_output:
         bufsize=1,
         start_new_session=True,
     )
+
+
+def release_server_port(port: int) -> None:
+    pids = listening_pids(port)
+    if not pids:
+        return
+
+    print(f"Port {port} is already in use; stopping: {', '.join(map(str, pids))}")
+    for pid in pids:
+        terminate_pid(pid, signal.SIGTERM)
+
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        remaining = [pid for pid in pids if process_exists(pid)]
+        if not remaining:
+            return
+        time.sleep(0.25)
+
+    remaining = [pid for pid in pids if process_exists(pid)]
+    if not remaining:
+        return
+    print(f"Port {port} is still held; killing: {', '.join(map(str, remaining))}")
+    for pid in remaining:
+        terminate_pid(pid, signal.SIGKILL)
+
+
+def listening_pids(port: int) -> list[int]:
+    try:
+        result = subprocess.run(
+            ["lsof", "-ti", f"tcp:{port}"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        print("Could not check for existing port users because lsof is not installed.")
+        return []
+
+    if result.returncode not in {0, 1}:
+        message = (result.stderr or result.stdout or "").strip()
+        raise RuntimeError(f"Could not check port {port}: {message or 'lsof failed'}")
+
+    current_pid = os.getpid()
+    pids: list[int] = []
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            pid = int(line)
+        except ValueError:
+            continue
+        if pid != current_pid and pid not in pids:
+            pids.append(pid)
+    return pids
+
+
+def terminate_pid(pid: int, sig: signal.Signals) -> None:
+    try:
+        os.kill(pid, sig)
+    except ProcessLookupError:
+        return
+    except PermissionError as exc:
+        raise RuntimeError(f"Cannot stop process {pid}: permission denied") from exc
+
+
+def process_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
 
 
 def wait_for_server(host: str, port: int) -> None:

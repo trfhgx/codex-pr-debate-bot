@@ -1,4 +1,7 @@
+import os
+import signal
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import scripts.start_with_tunnel as tunnel_script
@@ -25,6 +28,35 @@ class TunnelBootstrapTests(unittest.TestCase):
     def test_public_tunnel_ready_rejects_unreachable_tunnel(self) -> None:
         with patch.object(tunnel_script, "urlopen", side_effect=OSError("no route")):
             self.assertFalse(tunnel_script.public_tunnel_ready("https://bot.example.test"))
+
+    def test_listening_pids_reads_lsof_and_skips_current_process(self) -> None:
+        result = SimpleNamespace(
+            returncode=0,
+            stdout=f"123\n{os.getpid()}\n123\n",
+            stderr="",
+        )
+        with patch.object(tunnel_script.subprocess, "run", return_value=result) as run:
+            self.assertEqual(tunnel_script.listening_pids(8088), [123])
+
+        run.assert_called_once_with(
+            ["lsof", "-ti", "tcp:8088"],
+            cwd=tunnel_script.PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_release_server_port_terminates_listening_pids(self) -> None:
+        with (
+            patch.object(tunnel_script, "listening_pids", return_value=[123, 456]),
+            patch.object(tunnel_script, "terminate_pid") as terminate_pid,
+            patch.object(tunnel_script, "process_exists", return_value=False),
+        ):
+            tunnel_script.release_server_port(8088)
+
+        terminate_pid.assert_any_call(123, signal.SIGTERM)
+        terminate_pid.assert_any_call(456, signal.SIGTERM)
+        self.assertEqual(terminate_pid.call_count, 2)
 
 
 if __name__ == "__main__":
