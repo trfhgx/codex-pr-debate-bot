@@ -11,11 +11,19 @@ from pr_comment_codex_bot.settings import Settings
 
 
 class FakeWebSocket:
-    def __init__(self, *, include_final_answer: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        include_final_answer: bool = True,
+        stream_final_answer: bool = False,
+        completed_final_text: bool = True,
+    ) -> None:
         self.sent_methods: list[str] = []
         self.sent_params: list[dict[str, Any]] = []
         self._messages: list[str] = []
         self.include_final_answer = include_final_answer
+        self.stream_final_answer = stream_final_answer
+        self.completed_final_text = completed_final_text
 
     async def send(self, raw: str) -> None:
         message = json.loads(raw)
@@ -34,18 +42,57 @@ class FakeWebSocket:
         elif method == "turn/start":
             self._messages.append(self._response(message["id"], {}))
             if self.include_final_answer:
+                if self.stream_final_answer:
+                    self._messages.extend(
+                        [
+                            json.dumps(
+                                {
+                                    "jsonrpc": "2.0",
+                                    "method": "item/started",
+                                    "params": {
+                                        "item": {
+                                            "id": "agent-message-1",
+                                            "type": "agentMessage",
+                                            "phase": "final_answer",
+                                            "text": "",
+                                        }
+                                    },
+                                }
+                            ),
+                            json.dumps(
+                                {
+                                    "jsonrpc": "2.0",
+                                    "method": "item/agentMessage/delta",
+                                    "params": {
+                                        "itemId": "agent-message-1",
+                                        "delta": "do",
+                                    },
+                                }
+                            ),
+                            json.dumps(
+                                {
+                                    "jsonrpc": "2.0",
+                                    "method": "item/agentMessage/delta",
+                                    "params": {
+                                        "itemId": "agent-message-1",
+                                        "delta": "ne",
+                                    },
+                                }
+                            ),
+                        ]
+                    )
+                completed_item = {
+                    "type": "agentMessage",
+                    "phase": "final_answer",
+                }
+                if self.completed_final_text:
+                    completed_item["text"] = "done"
                 self._messages.append(
                     json.dumps(
                         {
                             "jsonrpc": "2.0",
                             "method": "item/completed",
-                            "params": {
-                                "item": {
-                                    "type": "agentMessage",
-                                    "phase": "final_answer",
-                                    "text": "done",
-                                }
-                            },
+                            "params": {"item": completed_item},
                         }
                     )
                 )
@@ -206,6 +253,22 @@ class CodexThreadClientTests(unittest.IsolatedAsyncioTestCase):
             "completed without a final answer",
             str(error.exception),
         )
+
+    async def test_final_answer_can_be_reconstructed_from_deltas(self) -> None:
+        ws = FakeWebSocket(stream_final_answer=True, completed_final_text=False)
+        client = CodexThreadClient(Settings(codex_thread_timeout_seconds=1))
+
+        with patch(
+            "pr_comment_codex_bot.codex_thread.websockets.connect",
+            return_value=FakeConnect(ws),
+        ):
+            result = await client._run_codex_thread_turn(
+                prompt="first",
+                sandbox="read-only",
+                effort="medium",
+            )
+
+        self.assertEqual(result["final_text"], "done")
 
 
 if __name__ == "__main__":

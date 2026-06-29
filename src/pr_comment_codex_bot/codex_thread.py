@@ -257,18 +257,42 @@ class CodexThreadClient:
             self.settings.codex_thread_timeout_seconds
         )
         final_text = ""
+        agent_message_text: dict[str, list[str]] = {}
+        final_answer_item_id: str | None = None
         while asyncio.get_running_loop().time() < deadline:
             timeout = max(1.0, deadline - asyncio.get_running_loop().time())
             message = await request.recv(timeout=timeout)
             method = message.get("method")
             params = message.get("params") or {}
+            if method == "item/started":
+                item = params.get("item") or {}
+                if item.get("type") == "agentMessage":
+                    item_id = str(item.get("id") or "")
+                    if item_id:
+                        agent_message_text.setdefault(item_id, [])
+                        if item.get("phase") == "final_answer":
+                            final_answer_item_id = item_id
+            if method == "item/agentMessage/delta":
+                item_id = str(params.get("itemId") or "")
+                delta = params.get("delta")
+                if item_id and isinstance(delta, str):
+                    agent_message_text.setdefault(item_id, []).append(delta)
             if method == "item/completed":
                 item = params.get("item") or {}
                 if item.get("type") == "agentMessage" and item.get("text"):
                     text = str(item["text"])
                     if item.get("phase") == "final_answer" or not final_text:
                         final_text = text
+                elif item.get("type") == "agentMessage":
+                    item_id = str(item.get("id") or "")
+                    text = "".join(agent_message_text.get(item_id, []))
+                    if text and (item.get("phase") == "final_answer" or not final_text):
+                        final_text = text
             if method == "turn/completed":
+                if not final_text and final_answer_item_id:
+                    final_text = "".join(
+                        agent_message_text.get(final_answer_item_id, [])
+                    )
                 if not final_text:
                     raise ValueError("Codex thread completed without a final answer")
                 return final_text
