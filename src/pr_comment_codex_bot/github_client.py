@@ -206,12 +206,12 @@ class GitHubClient:
     async def _get_token(self) -> str:
         if self.token_override:
             return self.token_override
-        if self.use_settings_token and self.settings.github_token:
-            return self.settings.github_token.get_secret_value()
+        if self.use_settings_token and self.settings.github_replier_token:
+            return self.settings.github_replier_token.get_secret_value()
         if self._token:
             return self._token
         use_gh_cli_token = (
-            self.settings.github_use_gh_cli_token
+            self.settings.github_replier_use_gh_cli_token
             if self.use_gh_cli_token is None
             else self.use_gh_cli_token
         )
@@ -222,8 +222,8 @@ class GitHubClient:
                 return token
         if not self.installation_id:
             raise RuntimeError(
-                "Missing GitHub auth. Set GITHUB_TOKEN, configure a GitHub App, "
-                "or login with gh CLI."
+                "Missing GitHub auth. Set GITHUB_REPLIER_TOKEN, configure a "
+                "GitHub App, or login with gh CLI."
             )
         app_jwt = self._make_app_jwt()
         url = (
