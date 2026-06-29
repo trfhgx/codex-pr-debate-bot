@@ -435,6 +435,11 @@ class RepoWebhookDebateE2ETests(unittest.TestCase):
             self.assertIn('["starting", "restarting"].includes(tunnelStatus)', dashboard_html)
             self.assertIn('tunnelStatus === "unhealthy"', dashboard_html)
             self.assertIn('tunnelStatus === "invalid"', dashboard_html)
+            self.assertIn('<nav class="header-nav">', dashboard_html)
+            self.assertNotIn(
+                '<div class="dashboard-footer">\n      <span>@tou.visuals</span>\n      <a href="/sessions">Current Sessions &gt;</a>',
+                dashboard_html,
+            )
 
             async def healthy_tunnel(_: str | None) -> dict[str, Any]:
                 return {
@@ -579,6 +584,70 @@ class RepoWebhookDebateE2ETests(unittest.TestCase):
             events = client.get("/events?limit=1").json()
             self.assertEqual(events[0]["status"], "ignored")
             self.assertIn("marked bot comment", events[0]["summary"])
+
+    def test_failed_debate_still_creates_current_session(self) -> None:
+        github_state = MockGitHubState()
+
+        with (
+            MockHTTPServer(lambda _: github_handler_factory(github_state)) as github,
+            isolated_app_env(github.base_url) as main,
+            TestClient(main.app) as client,
+        ):
+            import pr_comment_codex_bot.service as service_module
+
+            class FailingCodexThreadClient:
+                def __init__(self, settings: Any) -> None:
+                    self.settings = settings
+
+                async def run_debate(
+                    self,
+                    *,
+                    context: Any,
+                    session: Any,
+                    comment_style_guide: str,
+                ) -> Any:
+                    raise ValueError("Codex thread completed without a final answer")
+
+            add_response = client.post(
+                "/watched-repos", json={"url": "https://github.com/acme/widgets"}
+            )
+            self.assertEqual(add_response.status_code, 200, add_response.text)
+
+            payload = {
+                "action": "created",
+                "repository": {"full_name": "acme/widgets"},
+                "issue": {"number": 42, "pull_request": {"url": "ignored"}},
+                "comment": latest_comment_payload(),
+            }
+            body, signature = signed_github_body(payload, "test-secret")
+            with patch.object(
+                service_module, "CodexThreadClient", FailingCodexThreadClient
+            ):
+                webhook_response = client.post(
+                    "/webhooks/github",
+                    content=body,
+                    headers={
+                        "content-type": "application/json",
+                        "x-github-event": "issue_comment",
+                        "x-github-delivery": "delivery-failed-debate",
+                        "x-hub-signature-256": signature,
+                    },
+                )
+            self.assertEqual(webhook_response.status_code, 200, webhook_response.text)
+
+            events = client.get("/events?limit=1").json()
+            self.assertEqual(events[0]["status"], "failed")
+            self.assertIn("Processing failed: ValueError", events[0]["summary"])
+
+            current_sessions = client.get("/sessions/current").json()
+            self.assertEqual(current_sessions[0]["repo_full_name"], "acme/widgets")
+            self.assertEqual(current_sessions[0]["pr_number"], 42)
+            self.assertEqual(current_sessions[0]["status"], "blocked")
+            debug_sessions = client.get("/debug/sessions").json()
+            self.assertIn(
+                "Codex thread completed without a final answer",
+                debug_sessions[0]["state"]["unresolved_decisions"][0],
+            )
 
     def test_disabled_repo_ignores_webhook_comments(self) -> None:
         github_state = MockGitHubState()

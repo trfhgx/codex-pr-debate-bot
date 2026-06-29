@@ -106,6 +106,22 @@ DASHBOARD_HTML = """
       font-weight: 800;
       letter-spacing: -0.02em;
     }
+    .header-nav {
+      display: inline-flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .header-nav a {
+      color: var(--text-secondary);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      text-decoration: none;
+      text-transform: uppercase;
+    }
+    .header-nav a:hover {
+      color: var(--accent-green);
+    }
     .dashboard-grid {
       display: grid;
       grid-template-columns: repeat(2, 1fr);
@@ -739,6 +755,9 @@ DASHBOARD_HTML = """
   <div class="showcase-container">
     <header>
       <h1>PR Comment Codex Bot Dashboard</h1>
+      <nav class="header-nav">
+        <a href="/sessions">Current Sessions &gt;</a>
+      </nav>
     </header>
     
     <div class="dashboard-grid">
@@ -866,7 +885,6 @@ DASHBOARD_HTML = """
     <!-- Bottom showcase footer -->
     <div class="dashboard-footer">
       <span>@tou.visuals</span>
-      <a href="/sessions">Current Sessions &gt;</a>
     </div>
   </div>
 

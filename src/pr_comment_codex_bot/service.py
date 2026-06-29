@@ -446,6 +446,7 @@ class PRCommentService:
         if session is None:
             session = SessionState(repo_full_name=repo_full_name, pr_number=pr_number)
         session.last_processed_comment_id = comment_id
+        await self.storage.save_session(session)
 
         github = self._replier_github_client(
             installation_id=(payload.get("installation") or {}).get("id")
@@ -465,11 +466,28 @@ class PRCommentService:
         )
         comment_style = self.settings.read_comment_style()
 
-        debate = await CodexThreadClient(self.settings).run_debate(
-            context=context,
-            session=session,
-            comment_style_guide=comment_style,
-        )
+        try:
+            debate = await CodexThreadClient(self.settings).run_debate(
+                context=context,
+                session=session,
+                comment_style_guide=comment_style,
+            )
+        except Exception as exc:
+            session.status = "blocked"
+            error_message = f"Debate failed: {type(exc).__name__}: {exc}"
+            session.unresolved_decisions = [error_message]
+            await self.storage.save_session(session)
+            await self._update_event(
+                event_id,
+                status="failed",
+                summary=f"Processing failed: {type(exc).__name__}",
+                details_patch={
+                    "error": str(exc),
+                    "repo_full_name": repo_full_name,
+                    "pr_number": pr_number,
+                },
+            )
+            return
         decision = debate.decision
         session.debate_job_id = debate.job_id or session.debate_job_id
         session.debate_thread_id = debate.thread_id or session.debate_thread_id
