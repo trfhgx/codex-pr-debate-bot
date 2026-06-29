@@ -151,6 +151,9 @@ DASHBOARD_HTML = """
     }
     .events-card {
       grid-column: 1 / -1;
+      width: calc(100vw - 40px);
+      max-width: calc(100vw - 40px);
+      margin-left: calc(50% - 50vw + 20px);
       min-height: 560px;
       height: auto;
     }

@@ -419,6 +419,8 @@ class RepoWebhookDebateE2ETests(unittest.TestCase):
             self.assertIn("const eventId = String(event.id ?? \"\");", dashboard_html)
             self.assertNotIn("event.id.slice", dashboard_html)
             self.assertIn("grid-column: 1 / -1", dashboard_html)
+            self.assertIn("width: calc(100vw - 40px)", dashboard_html)
+            self.assertIn("margin-left: calc(50% - 50vw + 20px)", dashboard_html)
             self.assertIn("min-height: 560px", dashboard_html)
             self.assertIn("max-height: 460px", dashboard_html)
             self.assertIn("max-width: 100%", dashboard_html)
