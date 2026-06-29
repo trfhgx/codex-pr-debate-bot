@@ -416,6 +416,35 @@ class RepoWebhookDebateE2ETests(unittest.TestCase):
             )
             self.assertEqual(sessions[0]["state"]["status"], "interviewing")
 
+            current_sessions = client.get("/sessions/current").json()
+            self.assertEqual(current_sessions[0]["repo_full_name"], "acme/widgets")
+            self.assertEqual(current_sessions[0]["pr_number"], 42)
+            self.assertEqual(
+                current_sessions[0]["threads"][0]["thread_id"],
+                "codex-thread-debate-1",
+            )
+            self.assertEqual(
+                current_sessions[0]["threads"][0]["open_url"],
+                "/codex/threads/codex-thread-debate-1/open",
+            )
+            sessions_page = client.get("/sessions")
+            self.assertEqual(sessions_page.status_code, 200)
+            self.assertIn("Current Sessions", sessions_page.text)
+            open_response = client.get(
+                "/codex/threads/codex-thread-debate-1/open",
+                follow_redirects=False,
+            )
+            self.assertEqual(open_response.status_code, 307)
+            self.assertEqual(
+                open_response.headers["location"],
+                "codex://threads/codex-thread-debate-1",
+            )
+            missing_open_response = client.get(
+                "/codex/threads/not-tracked/open",
+                follow_redirects=False,
+            )
+            self.assertEqual(missing_open_response.status_code, 404)
+
             marked_payload = {
                 "action": "created",
                 "repository": {"full_name": "acme/widgets"},

@@ -5,9 +5,10 @@ import json
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from .env_file import update_env_values
 from .security import verify_github_signature
@@ -48,7 +49,8 @@ def set_webhook_sync_task_enabled(enabled: bool) -> None:
 app = FastAPI(title=settings.app_name)
 
 
-DASHBOARD_HTML = """\n<!doctype html>
+DASHBOARD_HTML = """
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -88,14 +90,25 @@ DASHBOARD_HTML = """\n<!doctype html>
     }
     .showcase-container {
       width: 100%;
-      max-width: 960px;
+      max-width: 1000px;
       display: flex;
       flex-direction: column;
       gap: 32px;
     }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0 10px;
+    }
+    header h1 {
+      font-size: 24px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+    }
     .dashboard-grid {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(2, 1fr);
       gap: 28px;
     }
     .card {
@@ -111,14 +124,14 @@ DASHBOARD_HTML = """\n<!doctype html>
       transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
     }
     .card:hover {
-      transform: scale(1.015);
+      transform: scale(1.01);
     }
     .card-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
       width: 100%;
-      margin-bottom: 12px;
+      margin-bottom: 16px;
     }
     .card-label {
       font-size: 12px;
@@ -127,16 +140,19 @@ DASHBOARD_HTML = """\n<!doctype html>
       text-transform: uppercase;
     }
     
-    /* Card Sizes */
-    .card-sm {
-      height: 200px;
+    /* Card Heights & Spans */
+    .status-card, .tunnel-card {
+      min-height: 180px;
+      height: auto;
     }
-    .card-md {
-      height: 240px;
+    .repos-card, .config-card {
+      min-height: 480px;
+      height: auto;
     }
-    .card-lg {
-      height: 508px; /* 240 + 240 + 28 */
-      grid-row: span 2;
+    .events-card {
+      grid-column: span 2;
+      min-height: 350px;
+      height: auto;
     }
 
     /* Common Form / Inputs inside cards */
@@ -144,8 +160,8 @@ DASHBOARD_HTML = """\n<!doctype html>
       background: rgba(0, 0, 0, 0.25);
       border: 1px solid rgba(0, 0, 0, 0.15);
       border-radius: 999px;
-      padding: 6px 14px;
-      font-size: 11px;
+      padding: 8px 16px;
+      font-size: 12px;
       font-weight: 600;
       color: inherit;
       outline: none;
@@ -159,21 +175,16 @@ DASHBOARD_HTML = """\n<!doctype html>
       cursor: pointer;
       appearance: none;
       -webkit-appearance: none;
-      padding-right: 26px;
-      background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none' stroke='%23000000' stroke-width='1.5'%3E%3Cpath d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
+      padding-right: 28px;
+      background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none' stroke='%23ffffff' stroke-width='1.5'%3E%3Cpath d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
       background-repeat: no-repeat;
       background-position: right 12px center;
-    }
-    .card-select-dark {
-      color: var(--text-white);
-      background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none' stroke='%23ffffff' stroke-width='1.5'%3E%3Cpath d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
     }
 
     /* Card 1: Status (Green) */
     .status-card {
       background: var(--accent-green);
       color: #000000;
-      grid-column: span 1;
       border: none;
     }
     .status-pill {
@@ -199,9 +210,6 @@ DASHBOARD_HTML = """\n<!doctype html>
     }
 
     /* Card 2: Watched Repos (Dark) */
-    .repos-card {
-      grid-column: span 1;
-    }
     .repos-header-btn {
       width: 20px;
       height: 20px;
@@ -219,11 +227,11 @@ DASHBOARD_HTML = """\n<!doctype html>
     .repos-list {
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 10px;
       overflow-y: auto;
-      flex: 1;
-      margin-top: 10px;
-      padding-right: 2px;
+      max-height: 280px;
+      margin-top: 14px;
+      padding-right: 4px;
     }
     .repos-list::-webkit-scrollbar {
       width: 4px;
@@ -236,10 +244,10 @@ DASHBOARD_HTML = """\n<!doctype html>
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 10px;
-      margin-top: 10px;
-      padding: 8px 10px;
-      border-radius: 12px;
+      gap: 12px;
+      margin-top: 14px;
+      padding: 10px 14px;
+      border-radius: 16px;
       background: rgba(255, 255, 255, 0.03);
       border: 1px solid rgba(255, 255, 255, 0.05);
     }
@@ -250,26 +258,26 @@ DASHBOARD_HTML = """\n<!doctype html>
       min-width: 0;
     }
     .repos-toolbar-title {
-      font-size: 10px;
+      font-size: 11px;
       font-weight: 800;
       letter-spacing: 0.08em;
       text-transform: uppercase;
       color: var(--text-secondary);
     }
     .repos-toolbar-sub {
-      font-size: 9px;
+      font-size: 10px;
       font-weight: 600;
       color: var(--text-muted);
     }
     .repo-item {
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto auto;
-      gap: 8px;
+      gap: 12px;
       align-items: center;
-      font-size: 11px;
+      font-size: 12px;
       background: rgba(255, 255, 255, 0.03);
-      padding: 6px 10px;
-      border-radius: 12px;
+      padding: 10px 14px;
+      border-radius: 16px;
       border: 1px solid rgba(255, 255, 255, 0.05);
     }
     .repo-item.disconnected {
@@ -292,7 +300,7 @@ DASHBOARD_HTML = """\n<!doctype html>
     }
     .repo-status {
       color: var(--text-muted);
-      font-size: 9px;
+      font-size: 10px;
       font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.04em;
@@ -367,35 +375,38 @@ DASHBOARD_HTML = """\n<!doctype html>
     }
     .repo-add-form {
       display: flex;
-      gap: 6px;
-      margin-top: 8px;
+      gap: 8px;
+      margin-top: 14px;
     }
     .repo-add-input {
       flex: 1;
       background: rgba(255, 255, 255, 0.05);
       border: 1px solid rgba(255, 255, 255, 0.1);
       border-radius: 999px;
-      padding: 4px 10px;
-      font-size: 10px;
+      padding: 10px 16px;
+      font-size: 13px;
       color: var(--text-white);
       outline: none;
     }
     .repo-add-submit {
-      background: var(--text-white);
+      background: var(--accent-green);
       color: #000000;
       border: none;
       border-radius: 999px;
-      padding: 4px 8px;
-      font-size: 10px;
+      padding: 10px 20px;
+      font-size: 13px;
       font-weight: 700;
       cursor: pointer;
+      transition: opacity 0.2s;
+    }
+    .repo-add-submit:hover {
+      opacity: 0.9;
     }
 
     /* Card 3: Webhook Tunnel (White) */
     .tunnel-card {
       background: #ffffff;
       color: #000000;
-      grid-column: span 2;
       border: none;
     }
     .tunnel-url-container {
@@ -455,17 +466,14 @@ DASHBOARD_HTML = """\n<!doctype html>
     }
 
     /* Card 4: Webhook Events Log (Dark) */
-    .events-card {
-      grid-column: span 2;
-    }
     .events-list {
       display: flex;
       flex-direction: column;
-      gap: 6px;
-      margin-top: 12px;
+      gap: 10px;
+      margin-top: 14px;
       overflow-y: auto;
-      flex: 1;
-      padding-right: 2px;
+      max-height: 250px;
+      padding-right: 4px;
     }
     .events-list::-webkit-scrollbar {
       width: 4px;
@@ -480,9 +488,9 @@ DASHBOARD_HTML = """\n<!doctype html>
       align-items: center;
       background: rgba(255, 255, 255, 0.02);
       border: 1px solid rgba(255, 255, 255, 0.04);
-      padding: 10px 14px;
+      padding: 12px 18px;
       border-radius: 18px;
-      font-size: 11px;
+      font-size: 12px;
       cursor: pointer;
       transition: background 0.2s, border-color 0.2s;
     }
@@ -502,7 +510,7 @@ DASHBOARD_HTML = """\n<!doctype html>
     }
     .event-summary {
       color: var(--text-white);
-      max-width: 200px;
+      max-width: 500px;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -510,7 +518,7 @@ DASHBOARD_HTML = """\n<!doctype html>
     .event-status {
       padding: 3px 8px;
       border-radius: 999px;
-      font-size: 9px;
+      font-size: 10px;
       font-weight: 700;
       text-transform: uppercase;
     }
@@ -527,117 +535,30 @@ DASHBOARD_HTML = """\n<!doctype html>
       color: var(--text-secondary);
     }
 
-    /* Card 5: Balance Gauge (Yellow) */
-    .balance-card {
-      background: var(--accent-yellow);
-      color: #000000;
-      grid-column: span 2;
-      border: none;
-    }
-    .balance-main {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      flex: 1;
-      margin-top: 12px;
-    }
-    .balance-info {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-    .balance-legend {
-      font-size: 12px;
-      font-weight: 700;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .legend-dot {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: #000000;
-    }
-    .legend-dot-faded {
-      background: rgba(0, 0, 0, 0.25);
-    }
-    .legend-text-faded {
-      opacity: 0.4;
-    }
-    .gauge-wrapper {
-      position: relative;
-      width: 140px;
-      height: 70px;
-      overflow: hidden;
-    }
-    .gauge-ticks {
-      position: absolute;
-      width: 100%;
-      height: 100%;
-      top: 0;
-      left: 0;
-    }
-    .tick {
-      position: absolute;
-      left: 50%;
-      bottom: 0;
-      width: 2px;
-      height: 6px;
-      background: rgba(0, 0, 0, 0.15);
-      transform-origin: 50% 100%;
-    }
-    .tick.active {
-      background: #000000;
-      width: 2.5px;
-      height: 9px;
-    }
-    .gauge-center {
-      position: absolute;
-      bottom: 0;
-      left: 0;
-      width: 100%;
-      text-align: center;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      line-height: 1;
-    }
-    .gauge-val {
-      font-size: 28px;
-      font-weight: 800;
-    }
-    .gauge-label {
-      font-size: 8px;
-      font-weight: 700;
-      letter-spacing: 0.05em;
-      text-transform: uppercase;
-      opacity: 0.5;
-      margin-top: 3px;
-    }
-
     /* Card 6: Bot Config / Settings (Orange, Tall) */
     .config-card {
       background: var(--accent-orange);
       color: #000000;
-      grid-column: span 2;
       border: none;
+    }
+    .config-card .card-select {
+      background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none' stroke='%23000000' stroke-width='1.5'%3E%3Cpath d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
     }
     .config-form {
       display: flex;
       flex-direction: column;
-      gap: 14px;
-      margin-top: 14px;
+      gap: 16px;
+      margin-top: 18px;
       flex: 1;
       justify-content: center;
     }
     .config-group {
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 6px;
     }
     .config-group label {
-      font-size: 10px;
+      font-size: 11px;
       font-weight: 800;
       letter-spacing: 0.05em;
       text-transform: uppercase;
@@ -647,18 +568,18 @@ DASHBOARD_HTML = """\n<!doctype html>
       display: flex;
       gap: 8px;
     }
-    .config-input {
+    .config-card .card-input, .config-card .card-select {
       flex: 1;
-      background: rgba(0, 0, 0, 0.08);
+      background: rgba(0, 0, 0, 0.06);
       border: 1px solid rgba(0, 0, 0, 0.1);
       border-radius: 12px;
-      padding: 8px 12px;
-      font-size: 12px;
+      padding: 10px 14px;
+      font-size: 13px;
       font-weight: 600;
       color: #000000;
       outline: none;
     }
-    .config-input::placeholder {
+    .config-card .card-input::placeholder {
       color: rgba(0, 0, 0, 0.35);
     }
     .config-pills {
@@ -671,8 +592,8 @@ DASHBOARD_HTML = """\n<!doctype html>
       flex: 1;
       border: none;
       background: none;
-      padding: 6px 12px;
-      font-size: 10px;
+      padding: 8px 14px;
+      font-size: 11px;
       font-weight: 700;
       border-radius: 999px;
       cursor: pointer;
@@ -684,7 +605,7 @@ DASHBOARD_HTML = """\n<!doctype html>
       color: var(--text-white);
     }
     .config-status-label {
-      font-size: 10px;
+      font-size: 11px;
       font-weight: 700;
       opacity: 0.8;
       margin-top: 2px;
@@ -694,8 +615,8 @@ DASHBOARD_HTML = """\n<!doctype html>
       color: var(--text-white);
       border: none;
       border-radius: 999px;
-      padding: 10px 16px;
-      font-size: 12px;
+      padding: 12px 20px;
+      font-size: 13px;
       font-weight: 700;
       cursor: pointer;
       margin-top: 10px;
@@ -763,42 +684,35 @@ DASHBOARD_HTML = """\n<!doctype html>
     .dashboard-footer span {
       text-transform: uppercase;
     }
+    .dashboard-footer a {
+      color: var(--text-secondary);
+      text-decoration: none;
+      text-transform: uppercase;
+    }
+    .dashboard-footer a:hover {
+      color: var(--accent-green);
+    }
 
     /* Responsive scaling */
     @media (max-width: 900px) {
       .dashboard-grid {
-        grid-template-columns: repeat(2, 1fr);
-      }
-      .card-lg {
-        grid-row: span 1;
-        height: auto;
-      }
-    }
-    @media (max-width: 580px) {
-      body {
-        padding: 20px 14px;
-      }
-      .dashboard-grid {
         grid-template-columns: 1fr;
-        gap: 20px;
       }
-      .card {
-        grid-column: span 1 !important;
-        height: auto !important;
-        min-height: 180px;
-        border-radius: 28px;
-      }
-      .card-lg {
-        min-height: 300px;
+      .events-card {
+        grid-column: span 1;
       }
     }
   </style>
 </head>
 <body>
   <div class="showcase-container">
+    <header>
+      <h1>PR Comment Codex Bot Dashboard</h1>
+    </header>
+    
     <div class="dashboard-grid">
       <!-- Card 1: System Status (Green) -->
-      <div class="card card-sm status-card">
+      <div class="card status-card">
         <div class="card-header">
           <span class="card-label" style="color: #000000;">SYSTEM STATUS</span>
           <span class="status-pill" id="status-pill">OFFLINE</span>
@@ -807,10 +721,32 @@ DASHBOARD_HTML = """\n<!doctype html>
         <div class="status-sub" id="status-sub">No forwarding active</div>
       </div>
 
-      <!-- Card 2: Watched Repos (Dark) -->
-      <div class="card card-sm repos-card">
+      <!-- Card 3: Webhook Tunnel (White) -->
+      <div class="card tunnel-card">
         <div class="card-header">
-          <span class="card-label" style="color: var(--text-secondary);">WATCHING</span>
+          <span class="card-label" style="color: #000000;">WEBHOOK TUNNEL</span>
+          <div class="perf-bars">
+            <div class="perf-bar" style="width: 5px; height: 35%;"></div>
+            <div class="perf-bar" style="width: 5px; height: 50%;"></div>
+            <div class="perf-bar" style="width: 5px; height: 40%;"></div>
+            <div class="perf-bar" style="width: 5px; height: 65%;"></div>
+            <div class="perf-bar" style="width: 5px; height: 55%;"></div>
+            <div class="perf-bar-slit" style="width: 24px; height: 80%;">
+              <div class="slit-inner"></div>
+            </div>
+            <div class="perf-bar" style="width: 6px; height: 90%;"></div>
+          </div>
+        </div>
+        <div class="tunnel-url-container" id="tunnel-container" title="Click to copy Webhook URL">
+          <span class="tunnel-url" id="tunnel-url">Checking tunnel...</span>
+          <svg class="copy-icon" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M8 7v12a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-8a2 2 0 00-2 2zM8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h2M16 5V3a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2h2" stroke-linecap="round" stroke-linejoin="round"></svg>
+        </div>
+      </div>
+
+      <!-- Card 2: Watched Repos (Dark) -->
+      <div class="card repos-card">
+        <div class="card-header">
+          <span class="card-label" style="color: var(--text-secondary);">WATCHED REPOSITORIES</span>
           <button class="repos-header-btn" id="repo-toggle-btn">+</button>
         </div>
         <div class="repos-toolbar">
@@ -832,56 +768,23 @@ DASHBOARD_HTML = """\n<!doctype html>
         </form>
       </div>
 
-      <!-- Card 3: Webhook Tunnel (White) -->
-      <div class="card card-sm tunnel-card">
+      <!-- Card 6: Bot Config / Settings (Orange) -->
+      <div class="card config-card">
         <div class="card-header">
-          <span class="card-label" style="color: #000000;">WEBHOOK TUNNEL</span>
-          <div class="perf-bars">
-            <div class="perf-bar" style="width: 5px; height: 35%;"></div>
-            <div class="perf-bar" style="width: 5px; height: 50%;"></div>
-            <div class="perf-bar" style="width: 5px; height: 40%;"></div>
-            <div class="perf-bar" style="width: 5px; height: 65%;"></div>
-            <div class="perf-bar" style="width: 5px; height: 55%;"></div>
-            <div class="perf-bar-slit" style="width: 24px; height: 80%;">
-              <div class="slit-inner"></div>
-            </div>
-            <div class="perf-bar" style="width: 6px; height: 90%;"></div>
-          </div>
-        </div>
-        <div class="tunnel-url-container" id="tunnel-container" title="Click to copy Webhook URL">
-          <span class="tunnel-url" id="tunnel-url">Checking tunnel...</span>
-          <svg class="copy-icon" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M8 7v12a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-8a2 2 0 00-2 2zM8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h2M16 5V3a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2h2" stroke-linecap="round" stroke-linejoin="round"></svg>
-        </div>
-      </div>
-
-      <!-- Card 4: Webhook Events Log (Dark) -->
-      <div class="card card-md events-card">
-        <div class="card-header">
-          <span class="card-label" style="color: var(--text-secondary);">RECENT ACTIVITY</span>
-          <button type="button" class="card-select card-select-dark" id="refresh-btn" style="border: 1px solid rgba(255, 255, 255, 0.1); padding: 4px 12px; border-radius: 999px;">Refresh</button>
-        </div>
-        <div class="events-list" id="events-list">
-          <div class="event-item" style="justify-content: center; color: var(--text-muted); cursor: default;">No events received</div>
-        </div>
-      </div>
-
-      <!-- Card 6: Bot Config / Settings (Orange, Tall) -->
-      <div class="card card-lg config-card">
-        <div class="card-header">
-          <span class="card-label" style="color: #000000;">BOT CONFIG</span>
+          <span class="card-label" style="color: #000000;">BOT CONFIGURATION</span>
         </div>
         <form class="config-form" id="config-form">
           <div class="config-group">
             <label>Holder Account</label>
             <div class="config-input-row">
-              <input class="config-input" type="text" id="holder-login" placeholder="holder_username" required>
+              <input class="card-input" type="text" id="holder-login" placeholder="holder_username" required>
             </div>
             <div class="config-pills" data-account="holder">
               <button type="button" class="config-pill active" data-auth="gh_cli">gh CLI</button>
               <button type="button" class="config-pill" data-auth="token">Token</button>
             </div>
             <div class="config-input-row" id="holder-token-row" style="display: none; margin-top: 6px;">
-              <input class="config-input" type="password" id="holder-token" placeholder="GitHub Personal Access Token">
+              <input class="card-input" type="password" id="holder-token" placeholder="GitHub Personal Access Token">
             </div>
             <div class="config-status-label" id="holder-status" style="color: rgba(0, 0, 0, 0.65);">Checking status...</div>
           </div>
@@ -889,21 +792,21 @@ DASHBOARD_HTML = """\n<!doctype html>
           <div class="config-group">
             <label>Replier Account</label>
             <div class="config-input-row">
-              <input class="config-input" type="text" id="replier-login" placeholder="replier_username" required>
+              <input class="card-input" type="text" id="replier-login" placeholder="replier_username" required>
             </div>
             <div class="config-pills" data-account="replier">
               <button type="button" class="config-pill active" data-auth="gh_cli">gh CLI</button>
               <button type="button" class="config-pill" data-auth="token">Token</button>
             </div>
             <div class="config-input-row" id="replier-token-row" style="display: none; margin-top: 6px;">
-              <input class="config-input" type="password" id="replier-token" placeholder="GitHub Personal Access Token">
+              <input class="card-input" type="password" id="replier-token" placeholder="GitHub Personal Access Token">
             </div>
             <div class="config-status-label" id="replier-status" style="color: rgba(0, 0, 0, 0.65);">Checking status...</div>
           </div>
 
           <div class="config-group">
             <label>Permissions Mode</label>
-            <select class="card-select" id="holder-permission" style="width: 100%; background-color: rgba(0,0,0,0.08); font-weight: 700;">
+            <select class="card-select" id="holder-permission" style="width: 100%; font-weight: 700;">
               <option value="admin">Admin</option>
               <option value="write">Write</option>
               <option value="triage">Triage</option>
@@ -914,34 +817,14 @@ DASHBOARD_HTML = """\n<!doctype html>
         </form>
       </div>
 
-      <!-- Card 5: Balance Gauge (Yellow) -->
-      <div class="card card-md balance-card">
+      <!-- Card 4: Webhook Events Log (Dark, Full Width) -->
+      <div class="card events-card">
         <div class="card-header">
-          <span class="card-label" style="color: #000000;">DELIVERY RATE</span>
-          <select class="card-select" id="delivery-select">
-            <option>This Month</option>
-          </select>
+          <span class="card-label" style="color: var(--text-secondary);">RECENT WEBHOOK EVENTS</span>
+          <button type="button" class="card-select card-select-dark" id="refresh-btn" style="border: 1px solid rgba(255, 255, 255, 0.1); padding: 4px 12px; border-radius: 999px;">Refresh</button>
         </div>
-        <div class="balance-main">
-          <div class="balance-info">
-            <div class="balance-legend">
-              <span class="legend-dot"></span>
-              <span id="legend-success">Success - 100%</span>
-            </div>
-            <div class="balance-legend">
-              <span class="legend-dot legend-dot-faded"></span>
-              <span class="legend-text-faded" id="legend-failed">Failed - 0%</span>
-            </div>
-          </div>
-          <div class="gauge-wrapper">
-            <div class="gauge-ticks" id="gauge-ticks">
-              <!-- Radial Ticks generated in JS -->
-            </div>
-            <div class="gauge-center">
-              <div class="gauge-val" id="gauge-val">100%</div>
-              <div class="gauge-label">Deliveries</div>
-            </div>
-          </div>
+        <div class="events-list" id="events-list">
+          <div class="event-item" style="justify-content: center; color: var(--text-muted); cursor: default;">No events received</div>
         </div>
       </div>
     </div>
@@ -949,7 +832,7 @@ DASHBOARD_HTML = """\n<!doctype html>
     <!-- Bottom showcase footer -->
     <div class="dashboard-footer">
       <span>@tou.visuals</span>
-      <span>Swipe &gt;</span>
+      <a href="/sessions">Current Sessions &gt;</a>
     </div>
   </div>
 
@@ -1049,7 +932,6 @@ DASHBOARD_HTML = """\n<!doctype html>
         
         if (!allEvents.length) {
           eventsList.innerHTML = '<div class="event-item" style="justify-content: center; color: var(--text-muted); cursor: default;">No events received yet.</div>';
-          updateDeliveryGauge(100, 0);
           return;
         }
 
@@ -1077,12 +959,6 @@ DASHBOARD_HTML = """\n<!doctype html>
             detailModal.showModal();
           });
         });
-
-        // Calculate delivery rate
-        const total = allEvents.length;
-        const successes = allEvents.filter(e => ['received', 'polled', 'watched', 'created', 'updated', 'ready_to_implement', 'implementing', 'implemented'].includes(e.status)).length;
-        const successRate = total > 0 ? Math.round((successes / total) * 100) : 100;
-        updateDeliveryGauge(successRate, 100 - successRate);
       } catch (err) {
         console.error("Error loading events: ", err);
       }
@@ -1319,34 +1195,6 @@ DASHBOARD_HTML = """\n<!doctype html>
       await refreshAll();
     });
 
-    function updateDeliveryGauge(successRate, failedRate) {
-      document.querySelector("#gauge-val").textContent = `${successRate}%`;
-      document.querySelector("#legend-success").textContent = `Success - ${successRate}%`;
-      document.querySelector("#legend-failed").textContent = `Failed - ${failedRate}%`;
-      
-      const gaugeTicks = document.querySelector('#gauge-ticks');
-      if (gaugeTicks) {
-        gaugeTicks.innerHTML = '';
-        const totalTicks = 32;
-        const angleStart = -90;
-        const angleEnd = 90;
-        const angleStep = (angleEnd - angleStart) / (totalTicks - 1);
-
-        for (let i = 0; i < totalTicks; i++) {
-          const angle = angleStart + i * angleStep;
-          const tick = document.createElement('div');
-          tick.className = 'tick';
-          tick.style.transform = `rotate(${angle}deg) translateY(-54px)`;
-          const percentThreshold = (i / (totalTicks - 1)) * 100;
-          
-          if (percentThreshold <= successRate) {
-            tick.classList.add('active');
-          }
-          gaugeTicks.appendChild(tick);
-        }
-      }
-    }
-
     document.querySelector("#refresh-btn").addEventListener("click", refreshAll);
     document.querySelector("#close-modal-btn").addEventListener("click", () => detailModal.close());
     
@@ -1361,6 +1209,271 @@ DASHBOARD_HTML = """\n<!doctype html>
     setInterval(loadEvents, 4000);
     setInterval(loadTunnelInfo, 5000);
     setInterval(loadWatches, 5000);
+  </script>
+</body>
+</html>
+"""
+SESSIONS_HTML = """\n<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Current Sessions - Codex PR Debate Bot</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #080808;
+      --panel: #141416;
+      --panel-2: #1d1d20;
+      --line: #2a2a2f;
+      --text: #f8fafc;
+      --muted: #9ca3af;
+      --green: #c6ff00;
+      --yellow: #ffe359;
+      --blue: #85a9ff;
+      --orange: #ff7c3b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      padding: 32px 20px;
+    }
+    main {
+      width: min(1120px, 100%);
+      margin: 0 auto;
+    }
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(30px, 5vw, 56px);
+      letter-spacing: 0;
+      line-height: 0.95;
+    }
+    .sub {
+      color: var(--muted);
+      margin-top: 10px;
+      max-width: 660px;
+      line-height: 1.5;
+    }
+    .nav {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .button,
+    button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 38px;
+      padding: 0 14px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--text);
+      text-decoration: none;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .button.primary {
+      background: var(--green);
+      color: #050505;
+      border-color: var(--green);
+    }
+    .sessions {
+      display: grid;
+      gap: 14px;
+    }
+    .session {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 18px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(260px, 0.8fr);
+      gap: 18px;
+    }
+    .repo {
+      font-size: 20px;
+      font-weight: 800;
+      margin-bottom: 8px;
+      overflow-wrap: anywhere;
+    }
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .pill {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 4px 10px;
+      background: #0e0e10;
+    }
+    .pill.status {
+      color: #050505;
+      background: var(--yellow);
+      border-color: var(--yellow);
+      font-weight: 800;
+    }
+    .threads {
+      display: grid;
+      gap: 10px;
+    }
+    .thread {
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+    }
+    .thread-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+    }
+    .thread-kind {
+      font-weight: 800;
+    }
+    .thread-id {
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+    .empty {
+      border: 1px dashed var(--line);
+      border-radius: 10px;
+      color: var(--muted);
+      padding: 32px;
+      text-align: center;
+    }
+    .copy-note {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    @media (max-width: 760px) {
+      .topbar,
+      .session {
+        grid-template-columns: 1fr;
+        display: grid;
+      }
+      .nav {
+        width: 100%;
+      }
+      .button,
+      button {
+        flex: 1;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="topbar">
+      <div>
+        <h1>Current Sessions</h1>
+        <p class="sub">Active PR conversations, their debate thread, and their implementation thread. Open a thread to inspect it in Codex.</p>
+      </div>
+      <nav class="nav">
+        <a class="button" href="/">Dashboard</a>
+        <button id="refresh">Refresh</button>
+      </nav>
+    </div>
+    <div class="sessions" id="sessions">
+      <div class="empty">Loading sessions...</div>
+    </div>
+  </main>
+
+  <script>
+    const sessionsEl = document.querySelector("#sessions");
+    const refreshBtn = document.querySelector("#refresh");
+
+    function esc(value) {
+      return String(value ?? "").replace(/[&<>"']/g, ch => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[ch]));
+    }
+
+    function formatDate(value) {
+      if (!value) return "unknown";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return value;
+      return date.toLocaleString();
+    }
+
+    function renderThread(thread) {
+      if (!thread.thread_id) {
+        return `
+          <div class="thread">
+            <div class="thread-head">
+              <span class="thread-kind">${esc(thread.label)}</span>
+              <span class="copy-note">not created yet</span>
+            </div>
+          </div>
+        `;
+      }
+      return `
+        <div class="thread">
+          <div class="thread-head">
+            <span class="thread-kind">${esc(thread.label)}</span>
+            <a class="button primary" href="${esc(thread.open_url)}">Open in Codex</a>
+          </div>
+          <div class="thread-id">${esc(thread.thread_id)}</div>
+        </div>
+      `;
+    }
+
+    function renderSession(session) {
+      return `
+        <section class="session">
+          <div>
+            <div class="repo">${esc(session.repo_full_name)} #${esc(session.pr_number)}</div>
+            <div class="meta">
+              <span class="pill status">${esc(session.status)}</span>
+              <span class="pill">Updated ${esc(formatDate(session.updated_at))}</span>
+              ${session.branch ? `<span class="pill">Branch ${esc(session.branch)}</span>` : ""}
+              ${session.commit_sha ? `<span class="pill">Commit ${esc(session.commit_sha.slice(0, 12))}</span>` : ""}
+              <a class="pill button" href="${esc(session.github_pr_url)}" target="_blank" rel="noreferrer">GitHub PR</a>
+            </div>
+          </div>
+          <div class="threads">
+            ${session.threads.map(renderThread).join("")}
+          </div>
+        </section>
+      `;
+    }
+
+    async function loadSessions() {
+      const response = await fetch("/sessions/current", { cache: "no-store" });
+      if (!response.ok) {
+        sessionsEl.innerHTML = `<div class="empty">Could not load sessions.</div>`;
+        return;
+      }
+      const sessions = await response.json();
+      if (!sessions.length) {
+        sessionsEl.innerHTML = `<div class="empty">No PR sessions yet. Trigger the bot from a watched PR comment first.</div>`;
+        return;
+      }
+      sessionsEl.innerHTML = sessions.map(renderSession).join("");
+    }
+
+    refreshBtn.addEventListener("click", loadSessions);
+    loadSessions();
   </script>
 </body>
 </html>\n"""
@@ -1509,6 +1622,24 @@ async def tunnel_info() -> dict[str, object]:
 @app.get("/", response_class=HTMLResponse)
 async def event_dashboard() -> HTMLResponse:
     return HTMLResponse(DASHBOARD_HTML)
+
+
+@app.get("/sessions", response_class=HTMLResponse)
+async def current_sessions_page() -> HTMLResponse:
+    return HTMLResponse(SESSIONS_HTML)
+
+
+@app.get("/sessions/current")
+async def current_sessions() -> list[dict[str, object]]:
+    sessions = await storage.list_sessions()
+    return [_session_view(session) for session in sessions]
+
+
+@app.get("/codex/threads/{thread_id}/open")
+async def open_codex_thread(thread_id: str) -> RedirectResponse:
+    if not await _is_known_thread_id(thread_id):
+        raise HTTPException(status_code=404, detail="Codex thread is not tracked")
+    return RedirectResponse(f"codex://threads/{quote(thread_id, safe='')}")
 
 
 @app.get("/events")
@@ -1771,6 +1902,53 @@ async def github_webhook(
 @app.get("/debug/sessions")
 async def debug_sessions() -> list[dict[str, object]]:
     return await storage.debug_dump()
+
+
+def _session_view(session: dict[str, object]) -> dict[str, object]:
+    state = dict(session.get("state") or {})
+    repo_full_name = str(session["repo_full_name"])
+    pr_number = int(session["pr_number"])
+    debate_thread_id = state.get("debate_thread_id")
+    codex_thread_id = state.get("codex_thread_id")
+    return {
+        "repo_full_name": repo_full_name,
+        "pr_number": pr_number,
+        "github_pr_url": f"https://github.com/{repo_full_name}/pull/{pr_number}",
+        "status": state.get("status") or "unknown",
+        "updated_at": state.get("updated_at") or session.get("updated_at"),
+        "branch": state.get("branch"),
+        "commit_sha": state.get("commit_sha"),
+        "threads": [
+            _thread_view("debate", "Debate", debate_thread_id),
+            _thread_view("implementation", "Implementation", codex_thread_id),
+        ],
+    }
+
+
+def _thread_view(kind: str, label: str, thread_id: object) -> dict[str, object]:
+    thread_id_str = str(thread_id) if thread_id else None
+    return {
+        "kind": kind,
+        "label": label,
+        "thread_id": thread_id_str,
+        "open_url": (
+            f"/codex/threads/{quote(thread_id_str, safe='')}/open"
+            if thread_id_str
+            else None
+        ),
+    }
+
+
+async def _is_known_thread_id(thread_id: str) -> bool:
+    sessions = await storage.list_sessions()
+    for session in sessions:
+        state = dict(session.get("state") or {})
+        if thread_id in {
+            state.get("debate_thread_id"),
+            state.get("codex_thread_id"),
+        }:
+            return True
+    return False
 
 
 def _safe_headers(headers: Any) -> dict[str, str]:

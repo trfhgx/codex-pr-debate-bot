@@ -92,6 +92,7 @@ class CodexThreadClient:
             sandbox="read-only",
             effort=self.settings.codex_thread_effort,
             thread_id=session.debate_thread_id,
+            thread_name=self._thread_name("Debate", context),
         )
         raw = {
             "id": result["thread_id"],
@@ -134,6 +135,7 @@ class CodexThreadClient:
             prompt=prompt,
             sandbox="danger-full-access",
             effort="high",
+            thread_name=self._thread_name("Implement", context),
         )
         parsed = self._parse_job_result(result["final_text"])
         if parsed:
@@ -167,6 +169,7 @@ class CodexThreadClient:
         sandbox: str,
         effort: str,
         thread_id: str | None = None,
+        thread_name: str | None = None,
     ) -> dict[str, Any]:
         async with websockets.connect(
             self.settings.codex_thread_ws_url,
@@ -185,7 +188,19 @@ class CodexThreadClient:
                 },
             )
             if thread_id:
-                thread = {"id": thread_id, "resumed": True}
+                thread_resume_params = {
+                    "threadId": thread_id,
+                    "cwd": str(self.settings.codex_thread_cwd),
+                    "approvalPolicy": "never",
+                    "sandbox": sandbox,
+                }
+                if self.settings.codex_thread_model:
+                    thread_resume_params["model"] = self.settings.codex_thread_model
+                thread_response = await request.call(
+                    "thread/resume", thread_resume_params
+                )
+                thread = thread_response["thread"]
+                thread_id = thread["id"]
             else:
                 thread_start_params = {
                     "cwd": str(self.settings.codex_thread_cwd),
@@ -200,6 +215,10 @@ class CodexThreadClient:
                 thread_response = await request.call("thread/start", thread_start_params)
                 thread = thread_response["thread"]
                 thread_id = thread["id"]
+            if thread_name:
+                await request.call(
+                    "thread/name/set", {"threadId": thread_id, "name": thread_name}
+                )
             await request.call(
                 "turn/start",
                 {
@@ -245,6 +264,11 @@ class CodexThreadClient:
             "files": context.files,
             "diff": context.diff[:180_000],
         }
+
+    @staticmethod
+    def _thread_name(prefix: str, context: PullRequestContext) -> str:
+        name = f"{prefix} {context.repo.full_name}#{context.pr.number}: {context.pr.title}"
+        return name[:120]
 
     @classmethod
     def _parse_debate_result(cls, raw: dict[str, Any]) -> CodexDebateResult:

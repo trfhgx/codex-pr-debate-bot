@@ -17,7 +17,7 @@ A self-hosted GitHub bot that turns PR comments into structured Codex work using
 ## What it does
 
 <p align="center">
-  <img src="assets/github_pr_mockup.jpg" alt="GitHub PR Comment debate and code suggestion mockup" width="100%" style="border-radius: 20px;" />
+  <img src="assets/cozy_workflow.jpg" alt="Codex PR Debate Bot Cozy Workflow Comic" width="100%" style="border-radius: 20px;" />
 </p>
 
 Meet your cozy, retro-pixelated PR debate companion! ☕️
@@ -412,35 +412,6 @@ tests/
 | Bot not triggered | Check `GITHUB_TRIGGER_PHRASE` appears in comment or PR title/body |
 | No implementation | Debate must return `ready_to_implement` with an `implementation_brief` |
 
-## Setup difficulty
-
-**Moderate** — not a one-click SaaS, but workable for a developer machine.
-
-| Piece | Difficulty | Why |
-| ----- | ---------- | --- |
-| Python + uv | Easy | Standard tooling |
-| GitHub token | Easy | `gh auth login` works out of the box |
-| Codex app-server | Medium | Requires Codex desktop app installed and running |
-| Public tunnel | Easy–Medium | `brew install cloudflared && make start` |
-| GitHub App (prod) | Medium | More setup, better for multi-repo teams |
-| Persistent hosting | Hard | Needs always-on server + stable URL + Codex runtime |
-
-**Fastest path:** macOS laptop, `gh auth login`, Codex app installed,
-`brew install cloudflared`, `make start`, add repo in dashboard.
-
-## What's still missing for production
-
-These are not blockers for open-sourcing, but worth knowing before running at
-scale:
-
-- [ ] **Hosted deployment guide** — Docker, Fly.io, or Railway example
-- [ ] **GitHub App manifest / setup script** — automated app creation
-- [ ] **Rate limiting** on webhook and dashboard endpoints
-- [ ] **Authentication** on dashboard and debug routes (currently open locally)
-- [ ] **Multi-installation GitHub App** routing (installation ID from webhook)
-- [ ] **Metrics / observability** — structured logging, OpenTelemetry
-- [ ] **CHANGELOG** and release tagging workflow
-- [ ] **PyPI publish** — optional; currently run from source
 
 ## Security
 

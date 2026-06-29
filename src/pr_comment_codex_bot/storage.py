@@ -505,6 +505,25 @@ class Storage:
             for repo, pr_number, state_json in rows
         ]
 
+    async def list_sessions(self) -> list[dict[str, object]]:
+        async with aiosqlite.connect(self.database_path) as db:
+            rows = await db.execute_fetchall(
+                """
+                select repo_full_name, pr_number, state_json, updated_at
+                from pr_sessions
+                order by updated_at desc
+                """
+            )
+        return [
+            {
+                "repo_full_name": repo,
+                "pr_number": pr_number,
+                "state": json.loads(state_json),
+                "updated_at": updated_at,
+            }
+            for repo, pr_number, state_json, updated_at in rows
+        ]
+
     @staticmethod
     async def _ensure_column(
         db: aiosqlite.Connection, table: str, column: str, column_type: str

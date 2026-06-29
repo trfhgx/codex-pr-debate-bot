@@ -25,6 +25,10 @@ class FakeWebSocket:
             self._messages.append(
                 self._response(message["id"], {"thread": {"id": "thread-new"}})
             )
+        elif method == "thread/resume":
+            self._messages.append(
+                self._response(message["id"], {"thread": {"id": params["threadId"]}})
+            )
         elif method == "turn/start":
             self._messages.append(self._response(message["id"], {}))
             self._messages.append(
@@ -74,7 +78,7 @@ class FakeConnect:
 
 
 class CodexThreadClientTests(unittest.IsolatedAsyncioTestCase):
-    async def test_existing_debate_thread_receives_new_turn(self) -> None:
+    async def test_existing_debate_thread_resumes_before_new_turn(self) -> None:
         ws = FakeWebSocket()
         client = CodexThreadClient(Settings(codex_thread_timeout_seconds=1))
 
@@ -91,8 +95,11 @@ class CodexThreadClientTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["thread_id"], "thread-existing")
         self.assertNotIn("thread/start", ws.sent_methods)
-        self.assertEqual(ws.sent_methods, ["initialize", "turn/start"])
-        turn_params = ws.sent_params[1]
+        self.assertEqual(ws.sent_methods, ["initialize", "thread/resume", "turn/start"])
+        resume_params = ws.sent_params[1]
+        self.assertEqual(resume_params["threadId"], "thread-existing")
+        self.assertEqual(resume_params["sandbox"], "read-only")
+        turn_params = ws.sent_params[2]
         self.assertEqual(turn_params["threadId"], "thread-existing")
 
     async def test_missing_debate_thread_starts_one_before_turn(self) -> None:
@@ -113,6 +120,29 @@ class CodexThreadClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ws.sent_methods, ["initialize", "thread/start", "turn/start"])
         turn_params = ws.sent_params[2]
         self.assertEqual(turn_params["threadId"], "thread-new")
+
+    async def test_thread_name_is_set_when_provided(self) -> None:
+        ws = FakeWebSocket()
+        client = CodexThreadClient(Settings(codex_thread_timeout_seconds=1))
+
+        with patch(
+            "pr_comment_codex_bot.codex_thread.websockets.connect",
+            return_value=FakeConnect(ws),
+        ):
+            await client._run_codex_thread_turn(
+                prompt="first",
+                sandbox="read-only",
+                effort="medium",
+                thread_name="Debate acme/widgets#42",
+            )
+
+        self.assertEqual(
+            ws.sent_methods,
+            ["initialize", "thread/start", "thread/name/set", "turn/start"],
+        )
+        name_params = ws.sent_params[2]
+        self.assertEqual(name_params["threadId"], "thread-new")
+        self.assertEqual(name_params["name"], "Debate acme/widgets#42")
 
 
 if __name__ == "__main__":
