@@ -1,11 +1,11 @@
 [project]
-name = "pr-comment-codex-bot"
+name = "codex-pr-debate-bot"
 version = "0.1.0"
-description = "GitHub PR comment bot that launches Codex debate and implementation through Codex app-server threads."
+description = "GitHub PR comment bot that uses your Codex app subscription to debate requirements and launch inspectable implementation threads."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
-keywords = ["github", "codex", "pull-request", "webhook", "fastapi", "ai-agent"]
+keywords = ["github", "codex", "pull-request", "webhook", "fastapi", "ai-agent", "code-review"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",

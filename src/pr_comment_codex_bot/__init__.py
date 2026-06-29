@@ -1,1 +1,1 @@
-"""PR comment Codex debate and implementation launcher."""
+"""Codex PR debate and implementation launcher."""

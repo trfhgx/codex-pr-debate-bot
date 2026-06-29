@@ -91,6 +91,7 @@ class CodexThreadClient:
             prompt=prompt,
             sandbox="read-only",
             effort=self.settings.codex_thread_effort,
+            thread_id=session.debate_thread_id,
         )
         raw = {
             "id": result["thread_id"],
@@ -160,7 +161,12 @@ class CodexThreadClient:
         return await self.get_job(job_id)
 
     async def _run_codex_thread_turn(
-        self, *, prompt: str, sandbox: str, effort: str
+        self,
+        *,
+        prompt: str,
+        sandbox: str,
+        effort: str,
+        thread_id: str | None = None,
     ) -> dict[str, Any]:
         async with websockets.connect(
             self.settings.codex_thread_ws_url,
@@ -178,19 +184,22 @@ class CodexThreadClient:
                     "capabilities": {"experimentalApi": True},
                 },
             )
-            thread_start_params = {
-                "cwd": str(self.settings.codex_thread_cwd),
-                "approvalPolicy": "never",
-                "sandbox": sandbox,
-                "sessionStartSource": "startup",
-                "threadSource": self.settings.app_name,
-                "ephemeral": False,
-            }
-            if self.settings.codex_thread_model:
-                thread_start_params["model"] = self.settings.codex_thread_model
-            thread_response = await request.call("thread/start", thread_start_params)
-            thread = thread_response["thread"]
-            thread_id = thread["id"]
+            if thread_id:
+                thread = {"id": thread_id, "resumed": True}
+            else:
+                thread_start_params = {
+                    "cwd": str(self.settings.codex_thread_cwd),
+                    "approvalPolicy": "never",
+                    "sandbox": sandbox,
+                    "sessionStartSource": "startup",
+                    "threadSource": self.settings.app_name,
+                    "ephemeral": False,
+                }
+                if self.settings.codex_thread_model:
+                    thread_start_params["model"] = self.settings.codex_thread_model
+                thread_response = await request.call("thread/start", thread_start_params)
+                thread = thread_response["thread"]
+                thread_id = thread["id"]
             await request.call(
                 "turn/start",
                 {

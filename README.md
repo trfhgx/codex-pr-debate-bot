@@ -1,48 +1,112 @@
-# PR Comment Codex Bot
+# Codex PR Debate Bot
 
-[![CI](https://github.com/YOUR_ORG/pr-comment-codex-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_ORG/pr-comment-codex-bot/actions/workflows/ci.yml)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+<p align="center">
+  <img src="assets/cozy_mascot.jpg" alt="Codex PR Debate Bot Cozy Mascot" width="340" style="border-radius: 20px;" />
+</p>
 
-A self-hosted GitHub bot that turns PR comments into structured Codex work. When
-someone comments on a pull request, the bot interviews them through a debate
-thread, then launches a Codex implementation thread once there is shared
-understanding.
+<p align="center">
+  <a href="https://github.com/YOUR_ORG/codex-pr-debate-bot/actions/workflows/ci.yml"><img src="https://github.com/YOUR_ORG/codex-pr-debate-bot/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT" /></a>
+</p>
 
-Codex work runs through the **official Codex app-server JSON-RPC protocol**
-(`thread/start`, `turn/start`) — not direct `/v1/responses` calls.
+A self-hosted GitHub bot that turns PR comments into structured Codex work using your local Codex app-server. It uses your Codex subscription instead of direct API calls, keeps implementation work in inspectable Codex threads, and debates the request before coding so you and Codex reach shared understanding first.
+
+Codex work runs through the **official Codex app-server JSON-RPC protocol** (`thread/start`, `turn/start`) — not direct `/v1/responses` calls. Follow-up PR replies continue on the same debate thread; implementation starts a separate Codex thread you can inspect.
+
+---
 
 ## What it does
+
+<p align="center">
+  <img src="assets/github_pr_mockup.jpg" alt="GitHub PR Comment debate and code suggestion mockup" width="100%" style="border-radius: 20px;" />
+</p>
 
 | Stage | What happens |
 | ----- | ------------ |
 | **Trigger** | A PR comment (or PR title/body) contains your marker phrase, default `codex` |
-| **Debate** | Codex reads the full PR context and asks 2–3 focused questions with recommended answers |
-| **Implement** | When status is `ready_to_implement`, Codex runs an implementation thread |
+| **Debate** | Codex reads the full PR context and asks 2-3 focused questions with recommended answers |
+| **Continue** | Human replies are sent back into the same Codex debate thread |
+| **Implement** | When status is `ready_to_implement`, Codex runs a separate implementation thread you can review |
 | **Reply** | The bot posts GitHub comments with questions, progress, and a final summary |
 
-## Architecture
+---
+
+## Architecture & Flows
+
+### System Architecture
+The bot acts as a coordinator between GitHub webhooks, a local SQLite state database, a dashboard UI, and the local Codex desktop application.
 
 ```mermaid
-flowchart LR
-  GH[GitHub PR comment] --> WH["/webhooks/github"]
-  WH --> SVC[PRCommentService]
-  SVC --> DB[(SQLite)]
-  SVC --> CT[CodexThreadClient]
-  CT --> CAS[Codex app-server WebSocket]
-  SVC --> GHC[GitHubClient]
-  GHC --> GHAPI[GitHub REST API]
-  TUN[Tunnel cloudflared/ngrok] --> WH
-  DASH[Dashboard :8088] --> SVC
+flowchart TB
+  subgraph GitHub["GitHub Cloud"]
+    GH["💬 PR Comment / Event"]
+    GHAPI["🌐 GitHub REST API"]
+  end
+
+  subgraph Local["Local Environment / Bot Server"]
+    TUN["☁️ Cloudflared/Tunnel"]
+    WH["⚡ Webhook Handler (/webhooks/github)"]
+    SVC["⚙️ PRCommentService"]
+    DB[("💾 SQLite DB")]
+    DASH["📊 Dashboard UI (:8088)"]
+    CT["🤖 Codex Client"]
+  end
+
+  subgraph Codex["Codex Desktop Environment"]
+    CAS["🔌 Codex app-server (WS)"]
+  end
+
+  GH -->|Webhook Payload| TUN
+  TUN --> WH
+  WH --> SVC
+  SVC --> DB
+  DASH -->|Config & Logs| SVC
+  SVC --> CT
+  CT <-->|JSON-RPC Protocol| CAS
+  SVC --> GHAPI
+  GHAPI -->|Invite & Comments| GH
+  
+  classDef default fill:#121214,stroke:#1f1f23,color:#ffffff,stroke-width:1.5px;
+  classDef accent fill:#c6ff00,stroke:#000000,color:#000000,font-weight:bold;
+  classDef highlight fill:#ffe359,stroke:#000000,color:#000000,font-weight:bold;
+  classDef blue fill:#85a9ff,stroke:#1f1f23,color:#000000;
+  
+  class SVC,CT accent;
+  class CAS highlight;
+  class GH,GHAPI blue;
 ```
 
-```text
-GitHub issue_comment / pull_request webhook
-  → SQLite session + event log
-  → Codex debate thread (read-only sandbox)
-  → GitHub reply with questions or implementation start
-  → Codex implementation thread
-  → GitHub final change summary
+### Execution Flow
+Here is the step-by-step lifecyle of a pull request interaction:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as PR Collaborator
+    participant Bot as Codex PR Debate Bot
+    participant Codex as Codex app-server (WS)
+    participant GH as GitHub API
+
+    Note over User, GH: Phase 1: The Debate (Interviewing)
+    User->>GH: Posts comment containing "codex..."
+    GH-->>Bot: Webhook event (issue_comment)
+    Bot->>Codex: Start debate thread (send PR files + diff)
+    Codex->>Codex: Analyze & formulate questions
+    Codex-->>Bot: Returns status: needs_answer + questions
+    Bot->>GH: Posts reply with 2-3 target questions
+
+    Note over User, GH: Phase 2: Shared Understanding & Implementation
+    User->>GH: Replies answering questions
+    GH-->>Bot: Webhook event (issue_comment)
+    Bot->>Codex: Continue same debate thread with answers + updated context
+    Codex->>Codex: Evaluate shared understanding
+    Codex-->>Bot: Returns status: ready_to_implement + brief
+    
+    Bot->>Codex: Start Implementation Thread (send brief)
+    Codex->>Codex: Generate code changes & write to workspace
+    Codex-->>Bot: Returns execution results
+    Bot->>GH: Pushes commits & posts final change summary comment
 ```
 
 ## Features
@@ -50,7 +114,10 @@ GitHub issue_comment / pull_request webhook
 - **Webhook-first** — real-time `issue_comment` and `pull_request` events
 - **Dashboard** — watch repos, auto-provision webhooks, inspect event log
 - **Tunnel bootstrap** — `make start` brings up cloudflared, ngrok, or localtunnel
-- **Debate → implement** — two-phase Codex flow with persisted session state
+- **Codex subscription workflow** — routes through your local Codex app-server instead of the API
+- **Debate-first loop** — asks targeted questions before implementation instead of blindly changing code
+- **Same-thread debate** — follow-up PR replies continue the original Codex debate thread
+- **Inspectable implementation** — code changes happen in a Codex thread you can open and review
 - **Flexible GitHub auth** — personal token, `gh` CLI token, or GitHub App JWT
 - **Bot bootstrap** — optionally invite your bot account when adding a watched repo
 - **Comment style guide** — customize tone via `docs/comment-style.md`
@@ -68,8 +135,8 @@ GitHub issue_comment / pull_request webhook
 ## Quick start
 
 ```bash
-git clone https://github.com/YOUR_ORG/pr-comment-codex-bot.git
-cd pr-comment-codex-bot
+git clone https://github.com/YOUR_ORG/codex-pr-debate-bot.git
+cd codex-pr-debate-bot
 make setup
 make start
 ```
@@ -220,6 +287,12 @@ repo is required.
 
 ## Codex thread contract
 
+The debate phase is stateful at the Codex thread level. The first triggered PR
+comment creates a debate thread. Later human replies on the same PR call
+`turn/start` with the saved `debate_thread_id`, so Codex keeps its thread-local
+context and cache. Implementation intentionally starts a separate thread so the
+code-writing work is easy to inspect independently.
+
 ### Debate payload
 
 ```json
@@ -239,7 +312,7 @@ repo is required.
     "files": [],
     "diff": "..."
   },
-  "source": "pr-comment-codex-bot:debate"
+  "source": "codex-pr-debate-bot:debate"
 }
 ```
 
@@ -276,7 +349,7 @@ Status values: `needs_answer`, `ready_to_implement`, `blocked`.
   },
   "implementation_brief": "...",
   "comment_style_guide": "...",
-  "source": "pr-comment-codex-bot"
+  "source": "codex-pr-debate-bot:implementation"
 }
 ```
 
