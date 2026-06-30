@@ -21,6 +21,54 @@ function Confirm-YesNo($Prompt) {
     return $answer -match '^(y|yes)$'
 }
 
+function Get-EnvValue($Key) {
+    if (-not (Test-Path ".env")) {
+        return ""
+    }
+    $line = Get-Content ".env" | Where-Object { $_ -like "$Key=*" } | Select-Object -Last 1
+    if (-not $line) {
+        return ""
+    }
+    return $line.Substring($Key.Length + 1)
+}
+
+function Set-EnvValues($Updates) {
+    $json = $Updates | ConvertTo-Json -Compress
+    $env:JSON_PAYLOAD = $json
+    uv run python -c "import json, os; from pathlib import Path; from pr_comment_codex_bot.env_file import update_env_values; update_env_values(Path('.env'), json.loads(os.environ['JSON_PAYLOAD']))"
+    Remove-Item Env:\JSON_PAYLOAD -ErrorAction SilentlyContinue
+}
+
+function Configure-ActivationPhrase {
+    $current = Get-EnvValue "GITHUB_TRIGGER_PHRASE"
+    if ([string]::IsNullOrEmpty($current)) {
+        $current = "codex"
+    }
+
+    Section "Activation phrase"
+    Write-Host "The activation phrase decides which PR comments the bot responds to."
+    Write-Host ""
+    Write-Host "Press Enter to keep the default: codex"
+    Write-Host "Type your own phrase to change it, for example: @codex-bot"
+    Write-Host "Type NONE to trigger on every PR comment on watched repos."
+    Write-Host ""
+
+    $phrase = Read-Host "Activation phrase [$current]"
+    if ([string]::IsNullOrEmpty($phrase)) {
+        $phrase = $current
+    }
+    if ($phrase -ceq "NONE" -or $phrase -ceq "none") {
+        $phrase = ""
+    }
+
+    Set-EnvValues @{ GITHUB_TRIGGER_PHRASE = $phrase }
+    if ([string]::IsNullOrEmpty($phrase)) {
+        Write-Host "Saved activation phrase: every PR comment on watched repos" -ForegroundColor Green
+    } else {
+        Write-Host "Saved activation phrase: $phrase" -ForegroundColor Green
+    }
+}
+
 function Show-WingetInstallHelp {
     Write-Host "Install winget by installing Microsoft App Installer:"
     Write-Host "  https://aka.ms/getwinget"
@@ -83,6 +131,8 @@ if (-not (Test-Path ".env")) {
     Copy-Item ".env.example" ".env"
     Write-Host "Created .env from .env.example"
 }
+
+Configure-ActivationPhrase
 
 Section "Setup complete"
 Write-Host "Next steps:"

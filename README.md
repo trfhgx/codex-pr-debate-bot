@@ -156,13 +156,15 @@ uv run python scripts/start_app.py
 
 `make setup` installs `cloudflared` (via Homebrew), syncs Python deps with `uv`,
 creates `.env` if needed, then walks you through holder/replier logins and tokens
-with links to create GitHub PATs. You can also configure accounts later in the
-dashboard.
+with links to create GitHub PATs. It also asks for the activation phrase: press
+Enter to keep `codex`, or type your own phrase. You can also configure accounts
+later in the dashboard.
 
 On Windows, `setup.ps1` installs `cloudflared` with `winget` when possible. If
 `winget` is missing, it explains how to install it and asks before attempting an
 automatic App Installer install. It also syncs Python deps with `uv` and creates
-`.env`. Configure holder/replier accounts in `.env` or the dashboard.
+`.env`, then asks for the activation phrase with the same `codex` default.
+Configure holder/replier accounts in `.env` or the dashboard.
 
 `make start` will:
 

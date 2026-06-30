@@ -162,6 +162,43 @@ prompt_token() {
   printf '%s' "$token"
 }
 
+prompt_activation_phrase() {
+  local current phrase updates
+  current="$(env_value GITHUB_TRIGGER_PHRASE)"
+  if [[ -z "$current" ]]; then
+    current="codex"
+  fi
+
+  section "Activation phrase"
+  cat <<'EOF'
+The activation phrase decides which PR comments the bot responds to.
+
+Press Enter to keep the default: codex
+Type your own phrase to change it, for example: @codex-bot
+Type NONE to trigger on every PR comment on watched repos.
+EOF
+
+  read -r -p "Activation phrase [$current] (type NONE for every PR comment): " phrase
+  phrase="${phrase:-$current}"
+  if [[ "$phrase" == "NONE" || "$phrase" == "none" ]]; then
+    phrase=""
+  fi
+
+  updates="$(ACTIVATION_PHRASE="$phrase" uv run python - <<'PY'
+import json
+import os
+
+print(json.dumps({"GITHUB_TRIGGER_PHRASE": os.environ["ACTIVATION_PHRASE"]}))
+PY
+)"
+  write_env_values "$updates"
+  if [[ -z "$phrase" ]]; then
+    bold "Saved activation phrase: every PR comment on watched repos"
+  else
+    bold "Saved activation phrase: $phrase"
+  fi
+}
+
 configure_accounts() {
   local holder_login holder_auth holder_token replier_login replier_auth replier_token
   local current_holder_login current_replier_login
@@ -282,10 +319,11 @@ fi
 
 if [[ -t 0 ]]; then
   configure_accounts
+  prompt_activation_phrase
 else
   echo
   echo "Non-interactive shell detected. Skipping account prompts."
-  echo "Configure holder/replier in the dashboard or edit .env manually."
+  echo "Configure holder/replier and activation phrase in the dashboard or edit .env manually."
 fi
 
 section "Setup complete"
@@ -294,4 +332,4 @@ echo "  1. Run: make start"
 echo "  2. Open: http://127.0.0.1:8088/"
 echo "  3. Add a watched repo under GitHub Accounts / Watched Repositories"
 echo
-echo "You can also edit account settings later in the dashboard."
+echo "You can also edit account settings and GITHUB_TRIGGER_PHRASE later."
