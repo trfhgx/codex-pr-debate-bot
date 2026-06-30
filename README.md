@@ -25,12 +25,12 @@ A self-hosted GitHub bot that turns PR comments into structured Codex work using
   <img src="assets/cozy_workflow.jpg" alt="Codex PR Debate Bot Cozy Workflow Comic" width="100%" style="border-radius: 20px;" />
 </p>
 
-Meet your cozy, retro-pixelated PR debate companion! ☕️
+Meet your retro-pixelated PR debate companion! ☕️
 
 Instead of writing code immediately (which often leads to bugs or misaligned features), the bot initiates a friendly debate loop directly inside your GitHub Pull Request thread:
 
 1. **The Handshake** — Mention `codex` in a PR comment to wake up the bot.
-2. **The Cozy Debate** — It reads the PR context and posts a checklist with 2–3 focused questions to ensure alignment.
+2. **The Debate** — It reads the PR context and posts a checklist with 2–3 focused questions to ensure alignment.
 3. **The Feedback** — You reply with your answers, continuing the conversation in the same Codex debate thread.
 4. **The Implementation** — Once there is shared understanding, the bot starts a fresh implementation thread to write, test, and commit the code directly to your branch.
 
