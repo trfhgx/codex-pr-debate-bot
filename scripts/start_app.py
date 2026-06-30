@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -15,7 +16,7 @@ except ImportError:  # pragma: no cover - script still works without dotenv.
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_CODEX_BIN = "/Applications/Codex.app/Contents/Resources/codex"
+MACOS_CODEX_BIN = Path("/Applications/Codex.app/Contents/Resources/codex")
 
 
 def main() -> None:
@@ -40,7 +41,7 @@ def main() -> None:
 
 
 def start_codex_app_server(codex_ws_url: str):
-    codex_bin = os.getenv("CODEX_APP_SERVER_BIN", DEFAULT_CODEX_BIN)
+    codex_bin = resolve_codex_bin()
     env = os.environ.copy()
     return subprocess.Popen(
         [codex_bin, "app-server", "--listen", codex_ws_url],
@@ -48,6 +49,18 @@ def start_codex_app_server(codex_ws_url: str):
         env=env,
         start_new_session=True,
     )
+
+
+def resolve_codex_bin() -> str:
+    configured = os.getenv("CODEX_APP_SERVER_BIN")
+    if configured:
+        return configured
+    path_codex = shutil.which("codex")
+    if path_codex:
+        return path_codex
+    if MACOS_CODEX_BIN.exists():
+        return str(MACOS_CODEX_BIN)
+    return "codex"
 
 
 def run_listener() -> None:

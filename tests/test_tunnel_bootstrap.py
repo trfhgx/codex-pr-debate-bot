@@ -154,6 +154,28 @@ class TunnelBootstrapTests(unittest.TestCase):
         terminate_pid.assert_any_call(456, signal.SIGTERM)
         self.assertEqual(terminate_pid.call_count, 2)
 
+    def test_windows_listening_pids_reads_netstat(self) -> None:
+        result = SimpleNamespace(
+            returncode=0,
+            stdout=(
+                "  Proto  Local Address          Foreign Address        State           PID\n"
+                "  TCP    127.0.0.1:8088         0.0.0.0:0              LISTENING       321\n"
+                "  TCP    [::1]:8088             [::]:0                 LISTENING       654\n"
+                "  TCP    127.0.0.1:9999         0.0.0.0:0              LISTENING       777\n"
+            ),
+            stderr="",
+        )
+        with patch.object(tunnel_script.subprocess, "run", return_value=result) as run:
+            self.assertEqual(tunnel_script.listening_pids_windows(8088), [321, 654])
+
+        run.assert_called_once_with(
+            ["netstat", "-ano", "-p", "tcp"],
+            cwd=tunnel_script.PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

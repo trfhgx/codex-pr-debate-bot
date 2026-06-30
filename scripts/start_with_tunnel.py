@@ -246,11 +246,18 @@ def release_server_port(port: int) -> None:
     if not remaining:
         return
     print(f"Port {port} is still held; killing: {', '.join(map(str, remaining))}")
+    kill_signal = getattr(signal, "SIGKILL", signal.SIGTERM)
     for pid in remaining:
-        terminate_pid(pid, signal.SIGKILL)
+        terminate_pid(pid, kill_signal)
 
 
 def listening_pids(port: int) -> list[int]:
+    if os.name == "nt":
+        return listening_pids_windows(port)
+    return listening_pids_lsof(port)
+
+
+def listening_pids_lsof(port: int) -> list[int]:
     try:
         result = subprocess.run(
             ["lsof", "-ti", f"tcp:{port}"],
@@ -275,6 +282,45 @@ def listening_pids(port: int) -> list[int]:
             continue
         try:
             pid = int(line)
+        except ValueError:
+            continue
+        if pid != current_pid and pid not in pids:
+            pids.append(pid)
+    return pids
+
+
+def listening_pids_windows(port: int) -> list[int]:
+    try:
+        result = subprocess.run(
+            ["netstat", "-ano", "-p", "tcp"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        print("Could not check for existing port users because netstat is not installed.")
+        return []
+
+    if result.returncode != 0:
+        message = (result.stderr or result.stdout or "").strip()
+        raise RuntimeError(
+            f"Could not check port {port}: {message or 'netstat failed'}"
+        )
+
+    current_pid = os.getpid()
+    pids: list[int] = []
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) < 5 or parts[0].upper() != "TCP":
+            continue
+        local_address = parts[1]
+        state = parts[-2].upper()
+        pid_text = parts[-1]
+        if state != "LISTENING" or not local_address.endswith(f":{port}"):
+            continue
+        try:
+            pid = int(pid_text)
         except ValueError:
             continue
         if pid != current_pid and pid not in pids:

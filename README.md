@@ -145,10 +145,23 @@ make setup
 make start
 ```
 
+On Windows PowerShell:
+
+```powershell
+git clone https://github.com/trfhgx/codex-pr-debate-bot.git
+cd codex-pr-debate-bot
+.\scripts\setup.ps1
+uv run python scripts/start_app.py
+```
+
 `make setup` installs `cloudflared` (via Homebrew), syncs Python deps with `uv`,
 creates `.env` if needed, then walks you through holder/replier logins and tokens
 with links to create GitHub PATs. You can also configure accounts later in the
 dashboard.
+
+On Windows, `setup.ps1` installs `cloudflared` with `winget` when possible,
+syncs Python deps with `uv`, and creates `.env`. Configure holder/replier
+accounts in `.env` or the dashboard.
 
 `make start` will:
 
@@ -263,14 +276,17 @@ On macOS with the Codex desktop app:
 /Applications/Codex.app/Contents/Resources/codex app-server --listen ws://127.0.0.1:8765
 ```
 
+On Windows, make sure `codex` is on `PATH`, or set `CODEX_APP_SERVER_BIN` in
+`.env` to the full path of the Codex executable that supports `app-server`.
+
 Or let `make start` / `scripts/start_app.py` launch it for you.
 
 ## Tunnel providers
 
 `TUNNEL_PROVIDER=auto` tries, in order:
 
-1. **cloudflared** — `brew install cloudflared` (recommended)
-2. **ngrok** — `brew install ngrok`
+1. **cloudflared** — `brew install cloudflared` on macOS or `winget install --id Cloudflare.cloudflared` on Windows (recommended)
+2. **ngrok** — `brew install ngrok`, `winget install ngrok.ngrok`, or download from ngrok
 3. **localtunnel** — requires Node/npm (`npx localtunnel`)
 
 Set `TUNNEL_PROVIDER=none` if you expose the server yourself (reverse proxy,
