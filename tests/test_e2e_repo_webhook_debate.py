@@ -304,6 +304,7 @@ def isolated_app_env(github_url: str, extra_env: dict[str, str] | None = None):
             )
         )
         env = {
+            "ENV_PATH": str(tmp / ".env"),
             "DATABASE_PATH": str(tmp / "bot.sqlite3"),
             "TUNNEL_INFO_PATH": str(tmp / "tunnel-info.json"),
             "COMMENT_STYLE_PATH": str(tmp / "comment-style.md"),
@@ -341,6 +342,27 @@ def signed_github_body(payload: dict[str, Any], secret: str) -> tuple[bytes, str
 
 
 class RepoWebhookDebateE2ETests(unittest.TestCase):
+    def test_startup_generates_missing_github_webhook_secret(self) -> None:
+        github_state = MockGitHubState()
+        with (
+            MockHTTPServer(lambda _: github_handler_factory(github_state)) as github,
+            isolated_app_env(
+                github.base_url, extra_env={"GITHUB_WEBHOOK_SECRET": ""}
+            ) as main,
+            TestClient(main.app) as client,
+        ):
+            self.assertEqual(client.get("/healthz").status_code, 200)
+            self.assertIsNotNone(main.settings.github_webhook_secret)
+            generated_secret = main.settings.github_webhook_secret.get_secret_value()
+            self.assertGreaterEqual(len(generated_secret), 32)
+            self.assertIn(
+                f"GITHUB_WEBHOOK_SECRET={generated_secret}",
+                main.settings.env_path.read_text(encoding="utf-8"),
+            )
+            self.assertTrue(
+                client.get("/tunnel-info").json()["webhook_secret_configured"]
+            )
+
     def test_dashboard_token_protects_admin_routes_not_webhook(self) -> None:
         github_state = MockGitHubState()
         with (

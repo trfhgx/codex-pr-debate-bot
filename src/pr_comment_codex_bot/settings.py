@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     app_name: str = "codex-pr-debate-bot"
+    env_path: Path = Path(".env")
     database_path: Path = Path("./bot.sqlite3")
     tunnel_info_path: Path = Path("./tunnel-info.json")
     dashboard_token: SecretStr | None = None

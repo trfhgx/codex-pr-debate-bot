@@ -191,7 +191,7 @@ Copy `.env.example` to `.env` and fill in the values you need.
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
 | `DASHBOARD_TOKEN` | *(empty)* | Optional shared secret for dashboard/API access when a public tunnel is running |
-| `GITHUB_WEBHOOK_SECRET` | *(empty)* | HMAC secret for webhook verification. Auto-generated on first repo watch if empty |
+| `GITHUB_WEBHOOK_SECRET` | *(auto-generated)* | HMAC secret for webhook verification. Generated on startup if empty |
 | `GITHUB_HOLDER_LOGIN` | — | Holder account login (repo admin) |
 | `GITHUB_HOLDER_TOKEN` | — | Holder token for webhook setup and replier invites |
 | `GITHUB_HOLDER_USE_GH_CLI_TOKEN` | `false` | Use `gh auth token` for the holder account |
@@ -223,10 +223,11 @@ clients can also send `Authorization: Bearer <DASHBOARD_TOKEN>` or
 `X-Dashboard-Token: <DASHBOARD_TOKEN>`.
 
 `/webhooks/github` stays publicly reachable so GitHub can deliver events, but it
-should use `GITHUB_WEBHOOK_SECRET` for HMAC signature verification. `/healthz`
-also stays public for tunnel health checks. If `DASHBOARD_TOKEN` is empty, the
-dashboard and API behave as before, which is not recommended over a public
-tunnel.
+uses `GITHUB_WEBHOOK_SECRET` for HMAC signature verification. If you leave
+`GITHUB_WEBHOOK_SECRET` empty, the app generates one and writes it to `.env`.
+`/healthz` also stays public for tunnel health checks. If `DASHBOARD_TOKEN` is
+empty, the dashboard and API behave as before, which is not recommended over a
+public tunnel.
 
 ### Codex
 
@@ -245,6 +246,7 @@ tunnel.
 | `SERVER_HOST` | `127.0.0.1` | Bind address |
 | `SERVER_PORT` | `8088` | Bind port |
 | `TUNNEL_PROVIDER` | `auto` | `auto`, `cloudflared`, `ngrok`, `localtunnel`, or `none` |
+| `ENV_PATH` | `.env` | Env file updated by the dashboard and generated webhook secret |
 | `DATABASE_PATH` | `./bot.sqlite3` | SQLite state database |
 | `TUNNEL_INFO_PATH` | `./tunnel-info.json` | Written by tunnel runner for dashboard |
 | `COMMENT_STYLE_PATH` | `docs/comment-style.md` | Bot comment tone guide |

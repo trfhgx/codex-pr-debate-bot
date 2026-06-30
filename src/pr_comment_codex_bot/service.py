@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import re
 import secrets
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -15,6 +14,7 @@ from .comments import (
     is_marked_bot_comment,
     mark_bot_comment,
 )
+from .env_file import update_env_values
 from .github_client import GitHubClient
 from .models import SessionState
 from .security import has_trigger
@@ -55,7 +55,7 @@ class PRCommentService:
             await self._update_event(event_id, status="blocked", summary=summary)
             return
 
-        secret, generated = self._get_or_create_webhook_secret()
+        secret, generated = self.ensure_github_webhook_secret()
         github = self._holder_github_client()
         if github is None:
             summary = (
@@ -977,24 +977,12 @@ class PRCommentService:
             queued_ids.append(watch_id)
         return queued_ids
 
-    def _get_or_create_webhook_secret(self) -> tuple[str, bool]:
+    def ensure_github_webhook_secret(self) -> tuple[str, bool]:
         if self.settings.github_webhook_secret:
             return self.settings.github_webhook_secret.get_secret_value(), False
         secret = secrets.token_urlsafe(32)
         self.settings.github_webhook_secret = SecretStr(secret)
-        env_path = Path(".env")
-        lines = []
-        if env_path.exists():
-            lines = env_path.read_text(encoding="utf-8").splitlines()
-        replaced = False
-        for index, line in enumerate(lines):
-            if line.startswith("GITHUB_WEBHOOK_SECRET="):
-                lines[index] = f"GITHUB_WEBHOOK_SECRET={secret}"
-                replaced = True
-                break
-        if not replaced:
-            lines.append(f"GITHUB_WEBHOOK_SECRET={secret}")
-        env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        update_env_values(self.settings.env_path, {"GITHUB_WEBHOOK_SECRET": secret})
         return secret, True
 
     def _holder_github_client(self) -> GitHubClient | None:

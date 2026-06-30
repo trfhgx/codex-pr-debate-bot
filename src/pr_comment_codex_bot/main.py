@@ -4,7 +4,6 @@ import asyncio
 import json
 import re
 import secrets
-from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
@@ -23,7 +22,6 @@ service = PRCommentService(settings=settings, storage=storage)
 poll_task: asyncio.Task[None] | None = None
 webhook_sync_task: asyncio.Task[None] | None = None
 _last_tunnel_webhook_url: str | None = None
-ENV_PATH = Path(".env")
 DASHBOARD_COOKIE_NAME = "codex_pr_debate_bot_dashboard_token"
 PUBLIC_PATHS = {"/healthz", "/webhooks/github"}
 
@@ -1714,6 +1712,7 @@ SESSIONS_HTML = """\n<!doctype html>
 async def startup() -> None:
     await storage.init()
     global poll_task, webhook_sync_task
+    service.ensure_github_webhook_secret()
     if settings.github_poll_interval_seconds > 0:
         poll_task = asyncio.create_task(_poll_watched_prs_loop())
     set_webhook_sync_task_enabled(settings.github_auto_sync_webhooks)
@@ -1749,7 +1748,7 @@ async def update_sync_settings(payload: dict[str, Any]) -> dict[str, object]:
         )
     enabled = bool(payload["auto_sync_webhooks"])
     update_env_values(
-        ENV_PATH, {"GITHUB_AUTO_SYNC_WEBHOOKS": "true" if enabled else "false"}
+        settings.env_path, {"GITHUB_AUTO_SYNC_WEBHOOKS": "true" if enabled else "false"}
     )
     reload_settings()
     set_webhook_sync_task_enabled(enabled)
@@ -1811,7 +1810,7 @@ async def update_account_settings(payload: dict[str, Any]) -> dict[str, object]:
     permission = str(holder.get("collaborator_permission") or "admin").strip() or "admin"
     updates["GITHUB_HOLDER_COLLABORATOR_PERMISSION"] = permission
 
-    update_env_values(ENV_PATH, updates)
+    update_env_values(settings.env_path, updates)
     reload_settings()
     return settings.accounts_status()
 
