@@ -474,11 +474,6 @@ tests/
 | No implementation | Debate must return `ready_to_implement` with an `implementation_brief` |
 
 
-## Security
-
-See [SECURITY.md](SECURITY.md). Never commit `.env`. Rotate credentials if they
-were ever exposed.
-
 ## License
 
 MIT — see [LICENSE](LICENSE).
