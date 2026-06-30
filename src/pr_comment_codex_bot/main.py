@@ -3,12 +3,13 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import secrets
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 
 from .env_file import update_env_values
 from .security import verify_github_signature
@@ -23,6 +24,8 @@ poll_task: asyncio.Task[None] | None = None
 webhook_sync_task: asyncio.Task[None] | None = None
 _last_tunnel_webhook_url: str | None = None
 ENV_PATH = Path(".env")
+DASHBOARD_COOKIE_NAME = "codex_pr_debate_bot_dashboard_token"
+PUBLIC_PATHS = {"/healthz", "/webhooks/github"}
 
 
 def reload_settings() -> Settings:
@@ -47,6 +50,48 @@ def set_webhook_sync_task_enabled(enabled: bool) -> None:
         _last_tunnel_webhook_url = None
 
 app = FastAPI(title=settings.app_name)
+
+
+def _dashboard_token_from_request(request: Request) -> str | None:
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        return auth_header[7:].strip()
+    header_token = request.headers.get("x-dashboard-token")
+    if header_token:
+        return header_token.strip()
+    query_token = request.query_params.get("token")
+    if query_token:
+        return query_token.strip()
+    return request.cookies.get(DASHBOARD_COOKIE_NAME)
+
+
+@app.middleware("http")
+async def require_dashboard_token(request: Request, call_next: Any) -> Any:
+    if request.url.path in PUBLIC_PATHS:
+        return await call_next(request)
+
+    if not settings.dashboard_token:
+        return await call_next(request)
+
+    expected = settings.dashboard_token.get_secret_value()
+    supplied = _dashboard_token_from_request(request)
+    if not supplied or not secrets.compare_digest(supplied, expected):
+        return PlainTextResponse(
+            "Dashboard token required. Open /?token=<DASHBOARD_TOKEN> once or send Authorization: Bearer <DASHBOARD_TOKEN>.",
+            status_code=401,
+        )
+
+    response = await call_next(request)
+    if request.query_params.get("token") and secrets.compare_digest(
+        request.query_params["token"], expected
+    ):
+        response.set_cookie(
+            DASHBOARD_COOKIE_NAME,
+            expected,
+            httponly=True,
+            samesite="lax",
+        )
+    return response
 
 
 DASHBOARD_HTML = """
@@ -1780,6 +1825,7 @@ async def tunnel_info() -> dict[str, object]:
             "provider": None,
             "status": "not_started",
             "webhook_secret_configured": bool(settings.github_webhook_secret),
+            "dashboard_token_configured": bool(settings.dashboard_token),
             "accounts": settings.accounts_status(),
             "auto_sync_webhooks": settings.github_auto_sync_webhooks,
         }
@@ -1792,6 +1838,7 @@ async def tunnel_info() -> dict[str, object]:
             "provider": None,
             "status": "invalid",
             "webhook_secret_configured": bool(settings.github_webhook_secret),
+            "dashboard_token_configured": bool(settings.dashboard_token),
             "accounts": settings.accounts_status(),
             "auto_sync_webhooks": settings.github_auto_sync_webhooks,
         }
@@ -1801,6 +1848,7 @@ async def tunnel_info() -> dict[str, object]:
         "public_url": public_url or None,
         "github_webhook_url": f"{public_url}/webhooks/github" if public_url else None,
         "webhook_secret_configured": bool(settings.github_webhook_secret),
+        "dashboard_token_configured": bool(settings.dashboard_token),
         "accounts": settings.accounts_status(),
         "auto_sync_webhooks": settings.github_auto_sync_webhooks,
     }

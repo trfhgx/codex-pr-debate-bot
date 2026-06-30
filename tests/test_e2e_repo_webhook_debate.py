@@ -284,7 +284,7 @@ def latest_comment_payload() -> dict[str, Any]:
 
 
 @contextlib.contextmanager
-def isolated_app_env(github_url: str):
+def isolated_app_env(github_url: str, extra_env: dict[str, str] | None = None):
     old_env = os.environ.copy()
     module_names = [
         name
@@ -303,23 +303,24 @@ def isolated_app_env(github_url: str):
                 }
             )
         )
-        os.environ.update(
-            {
-                "DATABASE_PATH": str(tmp / "bot.sqlite3"),
-                "TUNNEL_INFO_PATH": str(tmp / "tunnel-info.json"),
-                "COMMENT_STYLE_PATH": str(tmp / "comment-style.md"),
-                "GITHUB_API_URL": github_url,
-                "GITHUB_TOKEN": "test-token",
-                "GITHUB_USE_GH_CLI_TOKEN": "false",
-                "GITHUB_BOT_LOGIN": "codex-bot",
-                "GITHUB_REPO_ADMIN_TOKEN": "admin-token",
-                "GITHUB_REPO_ADMIN_COLLABORATOR_PERMISSION": "admin",
-                "GITHUB_WEBHOOK_SECRET": "test-secret",
-                "GITHUB_TRIGGER_PHRASE": "codex",
-                "GITHUB_AUTO_SYNC_WEBHOOKS": "false",
-                "CODEX_THREAD_WS_URL": "ws://127.0.0.1:1",
-            }
-        )
+        env = {
+            "DATABASE_PATH": str(tmp / "bot.sqlite3"),
+            "TUNNEL_INFO_PATH": str(tmp / "tunnel-info.json"),
+            "COMMENT_STYLE_PATH": str(tmp / "comment-style.md"),
+            "GITHUB_API_URL": github_url,
+            "GITHUB_TOKEN": "test-token",
+            "GITHUB_USE_GH_CLI_TOKEN": "false",
+            "GITHUB_BOT_LOGIN": "codex-bot",
+            "GITHUB_REPO_ADMIN_TOKEN": "admin-token",
+            "GITHUB_REPO_ADMIN_COLLABORATOR_PERMISSION": "admin",
+            "GITHUB_WEBHOOK_SECRET": "test-secret",
+            "GITHUB_TRIGGER_PHRASE": "codex",
+            "GITHUB_AUTO_SYNC_WEBHOOKS": "false",
+            "CODEX_THREAD_WS_URL": "ws://127.0.0.1:1",
+        }
+        if extra_env:
+            env.update(extra_env)
+        os.environ.update(env)
         for name in module_names:
             sys.modules.pop(name, None)
         import pr_comment_codex_bot.main as main
@@ -340,6 +341,56 @@ def signed_github_body(payload: dict[str, Any], secret: str) -> tuple[bytes, str
 
 
 class RepoWebhookDebateE2ETests(unittest.TestCase):
+    def test_dashboard_token_protects_admin_routes_not_webhook(self) -> None:
+        github_state = MockGitHubState()
+        with (
+            MockHTTPServer(lambda _: github_handler_factory(github_state)) as github,
+            isolated_app_env(
+                github.base_url, extra_env={"DASHBOARD_TOKEN": "dashboard-secret"}
+            ) as main,
+            TestClient(main.app) as client,
+        ):
+            self.assertEqual(client.get("/").status_code, 401)
+            self.assertEqual(client.get("/events").status_code, 401)
+            self.assertEqual(client.get("/healthz").status_code, 200)
+
+            body, signature = signed_github_body(
+                {
+                    "repository": {
+                        "full_name": "acme/widgets",
+                        "html_url": "https://github.com/acme/widgets",
+                    }
+                },
+                "test-secret",
+            )
+            webhook_response = client.post(
+                "/webhooks/github",
+                content=body,
+                headers={
+                    "content-type": "application/json",
+                    "x-github-event": "ping",
+                    "x-hub-signature-256": signature,
+                },
+            )
+            self.assertEqual(webhook_response.status_code, 200, webhook_response.text)
+            self.assertEqual(webhook_response.json()["status"], "ignored")
+
+            token_response = client.get("/?token=dashboard-secret")
+            self.assertEqual(token_response.status_code, 200, token_response.text)
+            self.assertIn(
+                "codex_pr_debate_bot_dashboard_token",
+                token_response.headers["set-cookie"],
+            )
+            self.assertEqual(client.get("/events").status_code, 200)
+            self.assertEqual(
+                client.get(
+                    "/tunnel-info",
+                    headers={"Authorization": "Bearer dashboard-secret"},
+                )
+                .json()["dashboard_token_configured"],
+                True,
+            )
+
     def test_repo_watch_webhook_comment_debate_and_reply(self) -> None:
         github_state = MockGitHubState()
         codex_state = MockCodexThreadState()

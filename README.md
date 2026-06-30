@@ -190,6 +190,7 @@ Copy `.env.example` to `.env` and fill in the values you need.
 
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
+| `DASHBOARD_TOKEN` | *(empty)* | Optional shared secret for dashboard/API access when a public tunnel is running |
 | `GITHUB_WEBHOOK_SECRET` | *(empty)* | HMAC secret for webhook verification. Auto-generated on first repo watch if empty |
 | `GITHUB_HOLDER_LOGIN` | — | Holder account login (repo admin) |
 | `GITHUB_HOLDER_TOKEN` | — | Holder token for webhook setup and replier invites |
@@ -206,6 +207,26 @@ Copy `.env.example` to `.env` and fill in the values you need.
 Configure holder and replier accounts in the dashboard under **GitHub Accounts**, or
 set the env vars above. Legacy names (`GITHUB_BOT_LOGIN`, `GITHUB_TOKEN`,
 `GITHUB_REPO_ADMIN_TOKEN`, etc.) still work.
+
+### Security
+
+Public tunnel URLs are public endpoints, not authentication. Set
+`DASHBOARD_TOKEN` before using `make start` with a tunnel. Then open the
+dashboard once with:
+
+```text
+http://127.0.0.1:8088/?token=<DASHBOARD_TOKEN>
+```
+
+The server stores an HTTP-only cookie for future dashboard/API requests. API
+clients can also send `Authorization: Bearer <DASHBOARD_TOKEN>` or
+`X-Dashboard-Token: <DASHBOARD_TOKEN>`.
+
+`/webhooks/github` stays publicly reachable so GitHub can deliver events, but it
+should use `GITHUB_WEBHOOK_SECRET` for HMAC signature verification. `/healthz`
+also stays public for tunnel health checks. If `DASHBOARD_TOKEN` is empty, the
+dashboard and API behave as before, which is not recommended over a public
+tunnel.
 
 ### Codex
 
@@ -382,6 +403,9 @@ comment. Only `ready_to_implement` starts an implementation thread.
 ```
 
 ## API endpoints
+
+When `DASHBOARD_TOKEN` is configured, every endpoint below requires that token
+except `/healthz` and `/webhooks/github`.
 
 | Method | Path | Description |
 | ------ | ---- | ----------- |

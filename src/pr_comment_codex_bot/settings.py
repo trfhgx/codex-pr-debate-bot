@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     app_name: str = "codex-pr-debate-bot"
     database_path: Path = Path("./bot.sqlite3")
     tunnel_info_path: Path = Path("./tunnel-info.json")
+    dashboard_token: SecretStr | None = None
 
     github_api_url: str = "https://api.github.com"
     github_webhook_secret: SecretStr | None = None
@@ -71,6 +72,7 @@ class Settings(BaseSettings):
         "github_replier_token",
         "github_webhook_secret",
         "github_private_key",
+        "dashboard_token",
         mode="before",
     )
     @classmethod
