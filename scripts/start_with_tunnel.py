@@ -365,6 +365,7 @@ async def wait_for_public_url(process, *, provider: str, tunnel_info_path: Path)
         raise RuntimeError("Tunnel process has no stdout")
     deadline = time.monotonic() + 120
     public_url = None
+    public_tunnel_is_ready = False
     while time.monotonic() < deadline:
         line = process.stdout.readline()
         if not line:
@@ -377,31 +378,41 @@ async def wait_for_public_url(process, *, provider: str, tunnel_info_path: Path)
         if match:
             candidate = match.group(0).rstrip("/")
             if is_public_tunnel_url(provider, candidate):
-                wait_for_public_tunnel(candidate)
                 public_url = candidate
+                public_tunnel_is_ready = wait_for_public_tunnel(candidate)
+                if not public_tunnel_is_ready:
+                    print(
+                        f"[{provider}] Public URL published but /healthz is not "
+                        "reachable yet; keeping the tunnel running."
+                    )
                 break
     if not public_url:
         raise RuntimeError(f"Timed out waiting for {provider} public URL")
+    status = "ready" if public_tunnel_is_ready else "unhealthy"
+    payload = {
+        "status": status,
+        "provider": provider,
+        "public_url": public_url,
+        "github_webhook_url": f"{public_url}/webhooks/github",
+        "ready_at": time.time(),
+    }
+    if not public_tunnel_is_ready:
+        payload["message"] = "Public URL exists but /healthz is not reachable yet"
+        payload["failed_checks"] = 1
     write_tunnel_info(
         tunnel_info_path,
-        {
-            "status": "ready",
-            "provider": provider,
-            "public_url": public_url,
-            "github_webhook_url": f"{public_url}/webhooks/github",
-            "ready_at": time.time(),
-        },
+        payload,
     )
     return public_url
 
 
-def wait_for_public_tunnel(public_url: str) -> None:
+def wait_for_public_tunnel(public_url: str) -> bool:
     deadline = time.monotonic() + 45
     while time.monotonic() < deadline:
         if public_tunnel_ready(public_url):
-            return
+            return True
         time.sleep(1)
-    raise RuntimeError(f"Public tunnel did not become reachable at {public_url}")
+    return False
 
 
 def public_tunnel_ready(public_url: str) -> bool:

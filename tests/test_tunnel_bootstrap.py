@@ -1,7 +1,10 @@
+import asyncio
+import json
 import os
 import signal
 import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -24,6 +27,18 @@ class FakeProcess:
 
     def kill(self) -> None:
         self.killed = True
+
+
+class FakeTunnelProcess(FakeProcess):
+    def __init__(self, lines: list[str]) -> None:
+        super().__init__()
+        self.lines = lines
+        self.stdout = self
+
+    def readline(self) -> str:
+        if self.lines:
+            return self.lines.pop(0)
+        return ""
 
 
 class Response:
@@ -124,6 +139,29 @@ class TunnelBootstrapTests(unittest.TestCase):
     def test_public_tunnel_ready_rejects_unreachable_tunnel(self) -> None:
         with patch.object(tunnel_script, "urlopen", side_effect=OSError("no route")):
             self.assertFalse(tunnel_script.public_tunnel_ready("https://bot.example.test"))
+
+    def test_wait_for_public_url_keeps_unhealthy_published_tunnel(self) -> None:
+        process = FakeTunnelProcess(
+            ["2026 INF https://bracelet-spatial-quest-previous.trycloudflare.com\n"]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            tunnel_info_path = Path(tmp) / "tunnel-info.json"
+            with patch.object(tunnel_script, "wait_for_public_tunnel", return_value=False):
+                public_url = asyncio.run(
+                    tunnel_script.wait_for_public_url(
+                        process,
+                        provider="cloudflared",
+                        tunnel_info_path=tunnel_info_path,
+                    )
+                )
+            tunnel_info = json.loads(tunnel_info_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            public_url,
+            "https://bracelet-spatial-quest-previous.trycloudflare.com",
+        )
+        self.assertEqual(tunnel_info["status"], "unhealthy")
+        self.assertEqual(tunnel_info["failed_checks"], 1)
 
     def test_listening_pids_reads_lsof_and_skips_current_process(self) -> None:
         result = SimpleNamespace(
