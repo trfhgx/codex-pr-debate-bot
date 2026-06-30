@@ -159,9 +159,10 @@ creates `.env` if needed, then walks you through holder/replier logins and token
 with links to create GitHub PATs. You can also configure accounts later in the
 dashboard.
 
-On Windows, `setup.ps1` installs `cloudflared` with `winget` when possible,
-syncs Python deps with `uv`, and creates `.env`. Configure holder/replier
-accounts in `.env` or the dashboard.
+On Windows, `setup.ps1` installs `cloudflared` with `winget` when possible. If
+`winget` is missing, it explains how to install it and asks before attempting an
+automatic App Installer install. It also syncs Python deps with `uv` and creates
+`.env`. Configure holder/replier accounts in `.env` or the dashboard.
 
 `make start` will:
 
