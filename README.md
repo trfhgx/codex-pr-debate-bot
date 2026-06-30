@@ -6,9 +6,14 @@
 
 <p align="center">
   <a href="https://github.com/trfhgx/codex-pr-debate-bot/actions/workflows/ci.yml"><img src="https://github.com/trfhgx/codex-pr-debate-bot/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <img src="https://img.shields.io/badge/status-beta-orange.svg" alt="Status: Beta" />
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT" /></a>
 </p>
+
+> **Beta:** This project is early and actively changing. Use it on repositories
+> where you are comfortable supervising webhook behavior, Codex threads, and
+> generated branches/comments.
 
 A self-hosted GitHub bot that turns PR comments into structured Codex work using your local Codex app-server. It uses your Codex subscription instead of direct API calls, keeps debate replies on the same Codex thread, launches each implementation run in a fresh inspectable Codex thread, and debates the request before coding so you and Codex reach shared understanding first.
 
