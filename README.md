@@ -11,9 +11,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT" /></a>
 </p>
 
-> **Beta:** This project is early and actively changing. Use it on repositories
-> where you are comfortable supervising webhook behavior, Codex threads, and
-> generated branches/comments.
+
 
 A self-hosted GitHub bot that turns PR comments into structured Codex work using your local Codex app-server. It uses your Codex subscription instead of direct API calls, keeps debate replies on the same Codex thread, launches each implementation run in a fresh inspectable Codex thread, and debates the request before coding so you and Codex reach shared understanding first.
 
