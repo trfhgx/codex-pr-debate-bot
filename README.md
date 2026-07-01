@@ -44,21 +44,21 @@ The bot acts as a coordinator between GitHub webhooks, a local SQLite state data
 ```mermaid
 flowchart TB
   subgraph GitHub["GitHub Cloud"]
-    GH["💬 PR Comment / Event"]
-    GHAPI["🌐 GitHub REST API"]
+    GH["PR Comment / Event"]
+    GHAPI["GitHub REST API"]
   end
 
   subgraph Local["Local Environment / Bot Server"]
-    TUN["☁️ Cloudflared/Tunnel"]
-    WH["⚡ Webhook Handler (/webhooks/github)"]
-    SVC["⚙️ PRCommentService"]
-    DB[("💾 SQLite DB")]
-    DASH["📊 Dashboard UI (:8088)"]
-    CT["🤖 Codex Client"]
+    TUN["Cloudflared/Tunnel"]
+    WH["⚡Webhook Handler (/webhooks/github)"]
+    SVC["PRCommentService"]
+    DB[("SQLite DB")]
+    DASH["Dashboard UI (:8088)"]
+    CT["Codex Client"]
   end
 
   subgraph Codex["Codex Desktop Environment"]
-    CAS["🔌 Codex app-server (WS)"]
+    CAS["Codex app-server (WS)"]
   end
 
   GH -->|Webhook Payload| TUN
